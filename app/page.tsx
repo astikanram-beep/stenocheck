@@ -38,7 +38,7 @@ export default function Home() {
         await signInWithEmailAndPassword(auth, email, password);
       }
 
-      window.location.href = "/dashboard";
+     window.location.href = "/main-dashboard";
     } catch (err: any) {
       console.error("EMAIL AUTH ERROR:", err);
 
@@ -67,7 +67,7 @@ export default function Home() {
 
       console.log("Google login successful:", result.user);
 
-      window.location.href = "/dashboard";
+      window.location.href = "/main-dashboard";
     } catch (err: any) {
       console.error("GOOGLE LOGIN ERROR:", err);
 
