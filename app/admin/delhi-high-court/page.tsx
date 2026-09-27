@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -66,27 +65,30 @@ export default function DelhiHighCourtAdmin() {
     useState<Difficulty>("easy");
 
   const [passages, setPassages] = useState<Passage[]>([]);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
-
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [passageNumber, setPassageNumber] = useState(1);
   const [passageText, setPassageText] = useState("");
-  const [access, setAccess] =
-    useState<AccessType>("free");
+  const [access, setAccess] = useState<AccessType>("free");
   const [active, setActive] = useState(true);
 
   /*
    * LOAD PASSAGES FROM FIRESTORE
+   *
+   * Path:
+   * dhcPassages/{difficulty}/passages/{passageId}
    */
-
   useEffect(() => {
+    setLoading(true);
+
     const passagesRef = collection(
       db,
+      "dhcPassages",
+      selectedDifficulty,
       "passages"
     );
 
@@ -103,73 +105,41 @@ export default function DelhiHighCourtAdmin() {
         snapshot.forEach((item) => {
           const data = item.data();
 
-          if (
-            data.exam ===
-              "Delhi High Court"
-          ) {
-            loaded.push({
-              id: item.id,
-              exam: data.exam,
-              difficulty: data.difficulty,
-              passageNumber:
-                data.passageNumber,
-              text: data.text || "",
-              wordCount:
-                data.wordCount || 0,
-              access:
-                data.access || "free",
-              active:
-                data.active ?? true,
-            });
-          }
+          loaded.push({
+            id: item.id,
+            exam: data.exam || "Delhi High Court",
+            difficulty:
+              data.difficulty || selectedDifficulty,
+            passageNumber: data.passageNumber || 1,
+            text: data.text || "",
+            wordCount: data.wordCount || 0,
+            access: data.access || "free",
+            active: data.active ?? true,
+          });
         });
 
         setPassages(loaded);
         setLoading(false);
       },
       (error) => {
-        console.error(
-          "FIRESTORE LOAD ERROR:",
-          error
-        );
-
+        console.error("FIRESTORE LOAD ERROR:", error);
+        setPassages([]);
         setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, []);
-
-  /*
-   * RESET FORM
-   */
-
-  function resetForm() {
-    setEditingId(null);
-    setPassageText("");
-    setAccess("free");
-    setActive(true);
-    setPassageNumber(
-      getNextPassageNumber()
-    );
-    setShowForm(false);
-  }
+  }, [selectedDifficulty]);
 
   /*
    * GET NEXT PASSAGE NUMBER
    */
-
   function getNextPassageNumber() {
     const numbers = passages
       .filter(
-        (item) =>
-          item.difficulty ===
-          selectedDifficulty
+        (item) => item.difficulty === selectedDifficulty
       )
-      .map(
-        (item) =>
-          item.passageNumber
-      );
+      .map((item) => item.passageNumber);
 
     for (let i = 1; i <= 20; i++) {
       if (!numbers.includes(i)) {
@@ -181,14 +151,23 @@ export default function DelhiHighCourtAdmin() {
   }
 
   /*
+   * RESET FORM
+   */
+  function resetForm() {
+    setEditingId(null);
+    setPassageText("");
+    setAccess("free");
+    setActive(true);
+    setPassageNumber(getNextPassageNumber());
+    setShowForm(false);
+  }
+
+  /*
    * OPEN ADD FORM
    */
-
   function openAddForm() {
     setEditingId(null);
-    setPassageNumber(
-      getNextPassageNumber()
-    );
+    setPassageNumber(getNextPassageNumber());
     setPassageText("");
     setAccess("free");
     setActive(true);
@@ -198,14 +177,9 @@ export default function DelhiHighCourtAdmin() {
   /*
    * OPEN EDIT FORM
    */
-
-  function openEditForm(
-    passage: Passage
-  ) {
+  function openEditForm(passage: Passage) {
     setEditingId(passage.id);
-    setPassageNumber(
-      passage.passageNumber
-    );
+    setPassageNumber(passage.passageNumber);
     setPassageText(passage.text);
     setAccess(passage.access);
     setActive(passage.active);
@@ -215,31 +189,21 @@ export default function DelhiHighCourtAdmin() {
   /*
    * SAVE PASSAGE
    */
-
   async function savePassage() {
     if (!passageText.trim()) {
-      alert(
-        "Please enter passage text."
-      );
+      alert("Please enter passage text.");
       return;
     }
 
-    if (
-      passageNumber < 1 ||
-      passageNumber > 20
-    ) {
-      alert(
-        "Passage number must be between 1 and 20."
-      );
+    if (passageNumber < 1 || passageNumber > 20) {
+      alert("Passage number must be between 1 and 20.");
       return;
     }
 
     const duplicate = passages.find(
       (item) =>
-        item.difficulty ===
-          selectedDifficulty &&
-        item.passageNumber ===
-          passageNumber &&
+        item.difficulty === selectedDifficulty &&
+        item.passageNumber === passageNumber &&
         item.id !== editingId
     );
 
@@ -253,63 +217,67 @@ export default function DelhiHighCourtAdmin() {
     setSaving(true);
 
     try {
-      const wordCount =
-        countWords(passageText);
+      const wordCount = countWords(passageText);
+
+      /*
+       * IMPORTANT:
+       * DHC Firestore path is:
+       * dhcPassages/{difficulty}/passages/{passageId}
+       */
 
       if (editingId) {
         const passageRef = doc(
           db,
+          "dhcPassages",
+          selectedDifficulty,
           "passages",
           editingId
         );
 
-        await updateDoc(
-          passageRef,
-          {
-            exam: "Delhi High Court",
-            difficulty:
-              selectedDifficulty,
-            passageNumber,
-            text: passageText.trim(),
-            wordCount,
-            access,
-            active,
-            updatedAt:
-              serverTimestamp(),
-          }
-        );
+        await updateDoc(passageRef, {
+          exam: "Delhi High Court",
+          difficulty: selectedDifficulty,
+          passageNumber,
+          text: passageText.trim(),
+          wordCount,
+          access,
+          active,
+          updatedAt: serverTimestamp(),
+        });
       } else {
         await addDoc(
           collection(
             db,
+            "dhcPassages",
+            selectedDifficulty,
             "passages"
           ),
           {
             exam: "Delhi High Court",
-            difficulty:
-              selectedDifficulty,
+            difficulty: selectedDifficulty,
             passageNumber,
             text: passageText.trim(),
             wordCount,
             access,
             active,
-            createdAt:
-              serverTimestamp(),
-            updatedAt:
-              serverTimestamp(),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
           }
         );
       }
 
-      resetForm();
-    } catch (error) {
-      console.error(
-        "SAVE PASSAGE ERROR:",
-        error
+      alert(
+        editingId
+          ? "Passage updated successfully."
+          : "Passage saved successfully."
       );
 
+      resetForm();
+    } catch (error) {
+      console.error("SAVE PASSAGE ERROR:", error);
+
       alert(
-        "Could not save passage. Check Firebase Firestore settings and console error."
+        "Could not save passage. Please check Firebase Firestore permissions and console error."
       );
     } finally {
       setSaving(false);
@@ -319,14 +287,10 @@ export default function DelhiHighCourtAdmin() {
   /*
    * DELETE PASSAGE
    */
-
-  async function deletePassage(
-    passage: Passage
-  ) {
-    const confirmed =
-      window.confirm(
-        `Delete Passage ${passage.passageNumber}?`
-      );
+  async function deletePassage(passage: Passage) {
+    const confirmed = window.confirm(
+      `Delete Passage ${passage.passageNumber}?`
+    );
 
     if (!confirmed) {
       return;
@@ -336,85 +300,62 @@ export default function DelhiHighCourtAdmin() {
       await deleteDoc(
         doc(
           db,
+          "dhcPassages",
+          selectedDifficulty,
           "passages",
           passage.id
         )
       );
     } catch (error) {
-      console.error(
-        "DELETE PASSAGE ERROR:",
-        error
-      );
+      console.error("DELETE PASSAGE ERROR:", error);
 
-      alert(
-        "Could not delete passage."
-      );
+      alert("Could not delete passage.");
     }
   }
 
   /*
    * TOGGLE ACTIVE
    */
-
-  async function toggleActive(
-    passage: Passage
-  ) {
+  async function toggleActive(passage: Passage) {
     try {
       await updateDoc(
         doc(
           db,
+          "dhcPassages",
+          selectedDifficulty,
           "passages",
           passage.id
         ),
         {
           active: !passage.active,
-          updatedAt:
-            serverTimestamp(),
+          updatedAt: serverTimestamp(),
         }
       );
     } catch (error) {
-      console.error(
-        "STATUS UPDATE ERROR:",
-        error
-      );
+      console.error("STATUS UPDATE ERROR:", error);
 
-      alert(
-        "Could not update passage status."
-      );
+      alert("Could not update passage status.");
     }
   }
 
-  const currentPassages =
-    passages
-      .filter(
-        (item) =>
-          item.difficulty ===
-          selectedDifficulty
-      )
-      .sort(
-        (a, b) =>
-          a.passageNumber -
-          b.passageNumber
-      );
-
-  const selectedDifficultyInfo =
-    difficulties.find(
-      (item) =>
-        item.id ===
-        selectedDifficulty
+  const currentPassages = passages
+    .filter(
+      (item) => item.difficulty === selectedDifficulty
+    )
+    .sort(
+      (a, b) => a.passageNumber - b.passageNumber
     );
+
+  const selectedDifficultyInfo = difficulties.find(
+    (item) => item.id === selectedDifficulty
+  );
 
   return (
     <main className="min-h-screen bg-slate-100">
-
       {/* HEADER */}
-
       <header className="border-b bg-white shadow-sm">
-
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-
           <div className="flex items-center gap-3">
-
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 font-black text-white">
               SC
             </div>
@@ -428,28 +369,21 @@ export default function DelhiHighCourtAdmin() {
                 Delhi High Court
               </p>
             </div>
-
           </div>
 
           <button
-            onClick={() =>
-              router.push("/admin")
-            }
+            type="button"
+            onClick={() => router.push("/admin")}
             className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             ← Dashboard
           </button>
-
         </div>
-
       </header>
 
       {/* CONTENT */}
-
       <div className="mx-auto max-w-7xl px-5 py-8">
-
         <div className="mb-8">
-
           <p className="text-sm font-semibold text-blue-600">
             PASSAGE MANAGEMENT
           </p>
@@ -459,128 +393,93 @@ export default function DelhiHighCourtAdmin() {
           </h2>
 
           <p className="mt-2 text-slate-500">
-            Manage up to 20 passages for
-            each difficulty level.
+            Manage up to 20 passages for each difficulty level.
           </p>
-
         </div>
 
         {/* DIFFICULTY */}
-
         <div className="grid gap-5 md:grid-cols-3">
+          {difficulties.map((difficulty) => {
+            const isSelected =
+              selectedDifficulty === difficulty.id;
 
-          {difficulties.map(
-            (difficulty) => {
+            const count = passages.filter(
+              (item) => item.difficulty === difficulty.id
+            ).length;
 
-              const active =
-                selectedDifficulty ===
-                difficulty.id;
-
-              const count =
-                passages.filter(
-                  (item) =>
-                    item.difficulty ===
-                    difficulty.id
-                ).length;
-
-              return (
-                <button
-                  key={difficulty.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedDifficulty(
-                      difficulty.id
-                    );
-                    setShowForm(false);
-                  }}
-                  className={`rounded-3xl border p-6 text-left transition ${
-                    active
-                      ? "border-blue-500 bg-blue-50 shadow-lg ring-2 ring-blue-200"
-                      : "border-slate-200 bg-white shadow-sm hover:-translate-y-1 hover:shadow-lg"
-                  }`}
-                >
-
-                  <div className="flex items-center justify-between">
-
-                    <div
-                      className={`flex h-12 w-12 items-center justify-center rounded-2xl text-xl font-bold ${
-                        difficulty.id ===
-                        "easy"
-                          ? "bg-blue-100 text-blue-700"
-                          : difficulty.id ===
-                            "moderate"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-red-100 text-red-700"
-                      }`}
-                    >
-                      {difficulty.id ===
-                      "easy"
-                        ? "E"
-                        : difficulty.id ===
-                          "moderate"
-                        ? "M"
-                        : "D"}
-                    </div>
-
-                    {active && (
-                      <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">
-                        SELECTED
-                      </span>
-                    )}
-
+            return (
+              <button
+                key={difficulty.id}
+                type="button"
+                onClick={() => {
+                  setSelectedDifficulty(difficulty.id);
+                  setShowForm(false);
+                  setEditingId(null);
+                }}
+                className={`rounded-3xl border p-6 text-left transition ${
+                  isSelected
+                    ? "border-blue-500 bg-blue-50 shadow-lg ring-2 ring-blue-200"
+                    : "border-slate-200 bg-white shadow-sm hover:-translate-y-1 hover:shadow-lg"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-2xl text-xl font-bold ${
+                      difficulty.id === "easy"
+                        ? "bg-blue-100 text-blue-700"
+                        : difficulty.id === "moderate"
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-red-100 text-red-700"
+                    }`}
+                  >
+                    {difficulty.id === "easy"
+                      ? "E"
+                      : difficulty.id === "moderate"
+                      ? "M"
+                      : "D"}
                   </div>
 
-                  <h3 className="mt-5 text-xl font-extrabold text-slate-900">
-                    {difficulty.name}
-                  </h3>
+                  {isSelected && (
+                    <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">
+                      SELECTED
+                    </span>
+                  )}
+                </div>
 
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    {
-                      difficulty.description
-                    }
-                  </p>
+                <h3 className="mt-5 text-xl font-extrabold text-slate-900">
+                  {difficulty.name}
+                </h3>
 
-                  <div className="mt-5 text-sm font-bold text-slate-700">
-                    {count} / 20 Passages
-                  </div>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {difficulty.description}
+                </p>
 
-                </button>
-              );
-            }
-          )}
-
+                <div className="mt-5 text-sm font-bold text-slate-700">
+                  {count} / 20 Passages
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* SELECTED SECTION */}
-
         <div className="mt-8 rounded-3xl border bg-white p-6 shadow-sm">
-
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-
             <div>
-
               <p className="text-sm font-semibold text-blue-600">
                 SELECTED DIFFICULTY
               </p>
 
               <h3 className="mt-1 text-2xl font-extrabold text-slate-900">
-                {
-                  selectedDifficultyInfo?.name
-                }{" "}
-                Passages
+                {selectedDifficultyInfo?.name} Passages
               </h3>
 
               <p className="mt-1 text-sm text-slate-500">
-                {
-                  currentPassages.length
-                }{" "}
-                of 20 passages added
+                {currentPassages.length} of 20 passages added
               </p>
-
             </div>
 
-            {currentPassages.length <
-              20 && (
+            {currentPassages.length < 20 && (
               <button
                 type="button"
                 onClick={openAddForm}
@@ -589,89 +488,56 @@ export default function DelhiHighCourtAdmin() {
                 + Add Passage
               </button>
             )}
-
           </div>
 
           {/* FORM */}
-
           {showForm && (
             <div className="mt-6 rounded-3xl border border-blue-200 bg-blue-50 p-6">
-
               <div className="flex items-center justify-between">
-
                 <h3 className="text-xl font-extrabold text-slate-900">
-                  {editingId
-                    ? "Edit Passage"
-                    : "Add Passage"}
+                  {editingId ? "Edit Passage" : "Add Passage"}
                 </h3>
 
                 <button
                   type="button"
-                  onClick={
-                    resetForm
-                  }
+                  onClick={resetForm}
                   className="text-sm font-semibold text-slate-500 hover:text-slate-800"
                 >
                   Cancel
                 </button>
-
               </div>
 
               {/* NUMBER */}
-
               <div className="mt-5">
-
                 <label className="mb-2 block text-sm font-bold text-slate-700">
                   Passage Number
                 </label>
 
                 <select
-                  value={
-                    passageNumber
-                  }
+                  value={passageNumber}
                   onChange={(e) =>
-                    setPassageNumber(
-                      Number(
-                        e.target.value
-                      )
-                    )
+                    setPassageNumber(Number(e.target.value))
                   }
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500"
                 >
-                  {Array.from(
-                    {
-                      length: 20,
-                    },
-                    (_, i) => (
-                      <option
-                        key={i + 1}
-                        value={i + 1}
-                      >
-                        Passage{" "}
-                        {i + 1}
-                      </option>
-                    )
-                  )}
+                  {Array.from({ length: 20 }, (_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      Passage {i + 1}
+                    </option>
+                  ))}
                 </select>
-
               </div>
 
               {/* TEXT */}
-
               <div className="mt-5">
-
                 <label className="mb-2 block text-sm font-bold text-slate-700">
                   Passage Text
                 </label>
 
                 <textarea
-                  value={
-                    passageText
-                  }
+                  value={passageText}
                   onChange={(e) =>
-                    setPassageText(
-                      e.target.value
-                    )
+                    setPassageText(e.target.value)
                   }
                   placeholder="Paste or type the complete passage here..."
                   rows={12}
@@ -682,30 +548,19 @@ export default function DelhiHighCourtAdmin() {
                   <span>
                     Word count:{" "}
                     <strong>
-                      {
-                        countWords(
-                          passageText
-                        )
-                      }
+                      {countWords(passageText)}
                     </strong>
                   </span>
 
                   <span>
-                    {
-                      passageText.length
-                    }{" "}
-                    characters
+                    {passageText.length} characters
                   </span>
                 </div>
-
               </div>
 
               {/* OPTIONS */}
-
               <div className="mt-5 grid gap-5 md:grid-cols-2">
-
                 <div>
-
                   <label className="mb-2 block text-sm font-bold text-slate-700">
                     Access
                   </label>
@@ -714,63 +569,39 @@ export default function DelhiHighCourtAdmin() {
                     value={access}
                     onChange={(e) =>
                       setAccess(
-                        e.target
-                          .value as AccessType
+                        e.target.value as AccessType
                       )
                     }
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500"
                   >
-
-                    <option value="free">
-                      Free
-                    </option>
-
-                    <option value="paid">
-                      Paid
-                    </option>
-
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
                   </select>
-
                 </div>
 
                 <div>
-
                   <label className="mb-2 block text-sm font-bold text-slate-700">
                     Status
                   </label>
 
                   <select
-                    value={
-                      active
-                        ? "active"
-                        : "inactive"
-                    }
+                    value={active ? "active" : "inactive"}
                     onChange={(e) =>
                       setActive(
-                        e.target
-                          .value ===
-                          "active"
+                        e.target.value === "active"
                       )
                     }
                     className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500"
                   >
-
-                    <option value="active">
-                      Active
-                    </option>
-
+                    <option value="active">Active</option>
                     <option value="inactive">
                       Inactive
                     </option>
-
                   </select>
-
                 </div>
-
               </div>
 
               {/* SAVE */}
-
               <button
                 type="button"
                 onClick={savePassage}
@@ -783,12 +614,10 @@ export default function DelhiHighCourtAdmin() {
                   ? "Update Passage"
                   : "Save Passage"}
               </button>
-
             </div>
           )}
 
           {/* LOADING */}
-
           {loading && (
             <div className="mt-8 rounded-2xl bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
               Loading passages...
@@ -796,145 +625,107 @@ export default function DelhiHighCourtAdmin() {
           )}
 
           {/* PASSAGE LIST */}
-
           {!loading && (
             <div className="mt-6 space-y-3">
-
-              {currentPassages.length ===
-                0 && (
+              {currentPassages.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-
                   <p className="text-lg font-bold text-slate-700">
                     No passages added yet
                   </p>
 
                   <p className="mt-2 text-sm text-slate-500">
                     Add your first{" "}
-                    {
-                      selectedDifficultyInfo?.name
-                    }{" "}
-                    passage.
+                    {selectedDifficultyInfo?.name} passage.
                   </p>
-
                 </div>
               )}
 
-              {currentPassages.map(
-                (passage) => (
-                  <div
-                    key={passage.id}
-                    className="rounded-2xl border bg-white p-5"
-                  >
+              {currentPassages.map((passage) => (
+                <div
+                  key={passage.id}
+                  className="rounded-2xl border bg-white p-5"
+                >
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                          Passage {passage.passageNumber}
+                        </span>
 
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-
-                      <div className="min-w-0">
-
-                        <div className="flex flex-wrap items-center gap-2">
-
-                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
-                            Passage{" "}
-                            {
-                              passage.passageNumber
-                            }
-                          </span>
-
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-bold ${
-                              passage.access ===
-                              "paid"
-                                ? "bg-purple-100 text-purple-700"
-                                : "bg-green-100 text-green-700"
-                            }`}
-                          >
-                            {passage.access ===
-                            "paid"
-                              ? "PAID"
-                              : "FREE"}
-                          </span>
-
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-bold ${
-                              passage.active
-                                ? "bg-green-100 text-green-700"
-                                : "bg-slate-100 text-slate-500"
-                            }`}
-                          >
-                            {passage.active
-                              ? "ACTIVE"
-                              : "INACTIVE"}
-                          </span>
-
-                        </div>
-
-                        <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">
-                          {passage.text}
-                        </p>
-
-                        <p className="mt-2 text-xs font-semibold text-slate-400">
-                          {
-                            passage.wordCount
-                          }{" "}
-                          words
-                        </p>
-
-                      </div>
-
-                      <div className="flex shrink-0 gap-2">
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openEditForm(
-                              passage
-                            )
-                          }
-                          className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            passage.access === "paid"
+                              ? "bg-purple-100 text-purple-700"
+                              : "bg-green-100 text-green-700"
+                          }`}
                         >
-                          Edit
-                        </button>
+                          {passage.access === "paid"
+                            ? "PAID"
+                            : "FREE"}
+                        </span>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            toggleActive(
-                              passage
-                            )
-                          }
-                          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100"
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            passage.active
+                              ? "bg-green-100 text-green-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
                         >
                           {passage.active
-                            ? "Disable"
-                            : "Enable"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            deletePassage(
-                              passage
-                            )
-                          }
-                          className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100"
-                        >
-                          Delete
-                        </button>
-
+                            ? "ACTIVE"
+                            : "INACTIVE"}
+                        </span>
                       </div>
 
+                      <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">
+                        {passage.text}
+                      </p>
+
+                      <p className="mt-2 text-xs font-semibold text-slate-400">
+                        {passage.wordCount} words
+                      </p>
                     </div>
 
-                  </div>
-                )
-              )}
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openEditForm(passage)
+                        }
+                        className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100"
+                      >
+                        Edit
+                      </button>
 
+                      <button
+                        type="button"
+                        onClick={() =>
+                          toggleActive(passage)
+                        }
+                        className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-700 hover:bg-amber-100"
+                      >
+                        {passage.active
+                          ? "Disable"
+                          : "Enable"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          deletePassage(passage)
+                        }
+                        className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-100"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-
         </div>
-
       </div>
-
     </main>
   );
 }
