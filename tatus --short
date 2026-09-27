@@ -1,0 +1,249 @@
+[1mdiff --git a/app/checker/page.tsx b/app/checker/page.tsx[m
+[1mindex f167415..bc460aa 100644[m
+[1m--- a/app/checker/page.tsx[m
+[1m+++ b/app/checker/page.tsx[m
+[36m@@ -1,32 +1,26 @@[m
+ "use client";[m
+ [m
+ import { useEffect, useMemo, useState } from "react";[m
+[31m-import {[m
+[31m-  addDoc,[m
+[31m-  collection,[m
+[31m-  serverTimestamp,[m
+[31m-} from "firebase/firestore";[m
+[32m+[m[32mimport { addDoc, collection, serverTimestamp } from "firebase/firestore";[m
+ import { auth, db } from "../../lib/firebase";[m
+ [m
+[31m-type Screen =[m
+[31m-  | "start"[m
+[31m-  | "passage"[m
+[31m-  | "exam"[m
+[31m-  | "settings"[m
+[31m-  | "typing"[m
+[31m-  | "result";[m
+[31m-[m
+[32m+[m[32mtype Screen = "start" | "passage" | "exam" | "typing" | "result";[m
+[32m+[m[32mtype Method = "exams" | "manual";[m
+[32m+[m[32mtype MistakeWeight = "full" | "half";[m
+ type ExamType =[m
+[31m-  | "SSC Stenographer"[m
+[31m-  | "DSSSB"[m
+[31m-  | "DHC"[m
+[31m-  | "AHC";[m
+[32m+[m[32m  | "SSC Stenographer Grade C & D Skill Test"[m
+[32m+[m[32m  | "Allahabad High Court Skill Test"[m
+[32m+[m[32m  | "Delhi High Court Skill Test"[m
+[32m+[m[32m  | "DSSSB Skill Test"[m
+[32m+[m[32m  | "Supreme Court Skill Test"[m
+[32m+[m[32m  | "CSIR Skill Test";[m
+ [m
+ type MistakeType =[m
+   | "wrong"[m
+   | "missing"[m
+   | "extra"[m
+   | "spelling"[m
+[32m+[m[32m  | "capitalization"[m
+   | "punctuation";[m
+ [m
+ type HighlightItem = {[m
+[36m@@ -36,403 +30,679 @@[m [mtype HighlightItem = {[m
+   index: number;[m
+ };[m
+ [m
+[32m+[m[32mtype Rules = {[m
+[32m+[m[32m  spelling: MistakeWeight;[m
+[32m+[m[32m  capitalization: MistakeWeight;[m
+[32m+[m[32m  punctuation: MistakeWeight;[m
+[32m+[m[32m};[m
+[32m+[m
+ type AnalysisResult = {[m
+   masterWords: number;[m
+   typedWords: number;[m
+[31m-[m
+   wrongWords: number;[m
+   missingWords: number;[m
+   extraWords: number;[m
+[31m-[m
+   spellingMistakes: number;[m
+[32m+[m[32m  capitalizationMistakes: number;[m
+   punctuationMistakes: number;[m
+[31m-[m
+   fullMistakes: number;[m
+   halfMistakes: number;[m
+[31m-[m
+   totalMistakes: number;[m
+[31m-[m
+   accuracy: number;[m
+   errorPercentage: number;[m
+[31m-[m
+   wpm: number;[m
+   timeTaken: number;[m
+[31m-[m
+   highlights: HighlightItem[];[m
+ };[m
+ [m
+[31m-const speedOptions = [[m
+[31m-  70,[m
+[31m-  80,[m
+[31m-  90,[m
+[31m-  100,[m
+[31m-  110,[m
+[31m-  120,[m
+[31m-  130,[m
+[31m-  140,[m
+[31m-  150,[m
+[31m-  160,[m
+[31m-];[m
+[31m-[m
+ const examOptions: ExamType[] = [[m
+[31m-  "SSC Stenographer",[m
+[31m-  "DSSSB",[m
+[31m-  "DHC",[m
+[31m-  "AHC",[m
+[32m+[m[32m  "SSC Stenographer Grade C & D Skill Test",[m
+[32m+[m[32m  "Allahabad High Court Skill Test",[m
+[32m+[m[32m  "Delhi High Court Skill Test",[m
+[32m+[m[32m  "DSSSB Skill Test",[m
+[32m+[m[32m  "Supreme Court Skill Test",[m
+[32m+[m[32m  "CSIR Skill Test",[m
+ ];[m
+ [m
+[31m-const timeOptions = [30, 40, 50];[m
+[32m+[m[32mconst speedOptions = [70, 80, 90, 100, 110, 120, 130, 140, 150, 160];[m
+ [m
+ const emptyResult: AnalysisResult = {[m
+   masterWords: 0,[m
+   typedWords: 0,[m
+[31m-[m
+   wrongWords: 0,[m
+   missingWords: 0,[m
+   extraWords: 0,[m
+[31m-[m
+   spellingMistakes: 0,[m
+[32m+[m[32m  capitalizationMistakes: 0,[m
+   punctuationMistakes: 0,[m
+[31m-[m
+   fullMistakes: 0,[m
+   halfMistakes: 0,[m
+[31m-[m
+   totalMistakes: 0,[m
+[31m-[m
+   accuracy: 0,[m
+   errorPercentage: 0,[m
+[31m-[m
+   wpm: 0,[m
+   timeTaken: 0,[m
+[31m-[m
+   highlights: [],[m
+ };[m
+ [m
+[31m-export default function CheckerPage() {[m
+[31m-  const [screen, setScreen] = useState<Screen>("start");[m
+[31m-[m
+[31m-  const [masterPassage, setMasterPassage] = useState("");[m
+[31m-  const [typedPassage, setTypedPassage] = useState("");[m
+[31m-[m
+[31m-  const [exam, setExam] = useState<ExamType | "">("");[m
+[31m-[m
+[31m-  const [duration, setDuration] = useState<number>(50);[m
+[31m-  const [speed, setSpeed] = useState<number>(100);[m
+[31m-[m
+[31m-  const [timeLeft, setTimeLeft] = useState(0);[m
+[31m-  const [startedAt, setStartedAt] = useState<number | null>(null);[m
+[31m-[m
+[31m-  const [result, setResult] =[m
+[31m-    useState<AnalysisResult>(emptyResult);[m
+[32m+[m[32mconst DEFAULT_RULES: Rules = {[m
+[32m+[m[32m  spelling: "half",[m
+[32m+[m[32m  capitalization: "half",[m
+[32m+[m[32m  punctuation: "half",[m
+[32m+[m[32m};[m
+ [m
+[31m-  const [saving, setSaving] = useState(false);[m
+[32m+[m[32m/*[m
+[32m+[m[32m * These are common spelling variants where British and American English[m
+[32m+[m[32m * use different spellings. They are intentionally treated as equivalent.[m
+[32m+[m[32m */[m
+[32m+[m[32mconst spellingEquivalents: Record<string, string> = {[m
+[32m+[m[32m  colour: "color",[m
+[32m+[m[32m  colours: "colors",[m
+[32m+[m[32m  honour: "honor",[m
+[32m+[m[32m  honoured: "honored",[m
+[32m+[m[32m  honouring: "honoring",[m
+[32m+[m[32m  honourable: "honorable",[m
+[32m+[m[32m  behaviour: "behavior",[m
+[32m+[m[32m  behaviours: "behaviors",[m
+[32m+[m[32m  favour: "favor",[m
+[32m+[m[32m  favoured: "favored",[m
+[32m+[m[32m  favourite: "favorite",[m
+[32m+[m[32m  favourites: "favorites",[m
+[32m+[m[32m  labour: "labor",[m
+[32m+[m[32m  labelled: "labeled",[m
+[32m+[m[32m  labelling: "labeling",[m
+[32m+[m[32m  travelled: "traveled",[m
+[32m+[m[32m  travelling: "traveling",[m
+[32m+[m[32m  cancelled: "canceled",[m
+[32m+[m[32m  counselling: "counseling",[m
+[32m+[m[32m  counsellor: "counselor",[m
+[32m+[m[32m  defence: "defense",[m
+[32m+[m[32m  offence: "offense",[m
+[32m+[m[32m  licence: "license",[m
+[32m+[m[32m  practise: "practice",[m
+[32m+[m[32m  organisation: "organization",[m
+[32m+[m[32m  organisations: "organizations",[m
+[32m+[m[32m  recognise: "recognize",[m
+[32m+[m[32m  recognised: "recognized",[m
+[32m+[m[32m  realise: "realize",[m
+[32m+[m[32m  realised: "realized",[m
+[32m+[m[32m  analyse: "analyze",[m
+[32m+[m[32m  analysed: "analyzed",[m
+[32m+[m[32m  centre: "center",[m
+[32m+[m[32m  metre: "meter",[m
+[32m+[m[32m  programme: "program",[m
+[32m+[m[32m  catalogue: "catalog",[m
+[32m+[m[32m  dialogue: "dialog",[m
+[32m+[m[32m};[m
+ [m
+[31m-  const masterWords = useMemo([m
+[31m-    () => getWords(masterPassage).length,[m
+[31m-    [masterPassage][m
+[31m-  );[m
+[32m+[m[32m/*[m
+[32m+[m[32m * Common shorthand / formal variants. They are accepted as the same word[m
+[32m+[m[32m * for checking purposes, e.g. Hon., Hon'ble and Honourable.[m
+[32m+[m[32m */[m
+[32m+[m[32mconst shortFormGroups = [[m
+[32m+[m[32m  ["hon", "honble", "honourable", "honorable"],[m
+[32m+[m[32m  ["dept", "department"],[m
+[32m+[m[32m  ["govt", "government"],[m
+[32m+[m[32m  ["gov", "government"],[m
+[32m+[m[32m  ["approx", "approximately"],[m
+[32m+[m[32m  ["no", "number"],[m
+[32m+[m[32m  ["nos", "numbers"],[m
+[32m+[m[32m  ["misc", "miscellaneous"],[m
+[32m+[m[32m  ["etc", "etcetera"],[m
+[32m+[m[32m  ["ie", "i.e"],[m
+[32m+[m[32m  ["eg", "e.g"],[m
+[32m+[m[32m];[m
+ [m
+[31m-  const typedWords = useMemo([m
+[31m-    () => getWords(typedPassage).length,[m
+[31m-    [typedPassage][m
+[31m-  );[m
+[32m+[m[32mfunction getWords(text: string): string[] {[m
+[32m+[m[32m  return text.trim() ? text.trim().split(/\s+/) : [];[m
+[32m+[m[32m}[m
+ [m
+[32m+[m[32mfunction getDurationOptions(exam: ExamType | ""): number[] {[m
+[32m+[m[32m  if (exam === "SSC Stenographer Grade C & D Skill Test") {[m
+[32m+[m[32m    return [40, 50];[m
+[32m+[m[32m  }[m
+   /*[m
+[31m-   * TIMER[m
+[32m+[m[32m   * Other examinations are kept selectable rather than assigning an[m
+[32m+[m[32m   * unverified official duration. The user can choose the duration shown[m
+[32m+[m[32m   * by the application for that test.[m
+    */[m
+[31m-  useEffect(() => {[m
+[31m-    if (screen !== "typing") return;[m
+[31m-   
