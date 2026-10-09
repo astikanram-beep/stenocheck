@@ -7,6 +7,7 @@ import { auth, db } from "../../lib/firebase";
 type Screen = "start" | "passage" | "exam" | "typing" | "result";
 type Method = "exams" | "manual";
 type MistakeWeight = "full" | "half";
+
 type ExamType =
   | "SSC Stenographer Grade C & D Skill Test"
   | "Allahabad High Court Skill Test"
@@ -64,7 +65,18 @@ const examOptions: ExamType[] = [
   "CSIR Skill Test",
 ];
 
-const speedOptions = [70, 80, 90, 100, 110, 120, 130, 140, 150, 160];
+const speedOptions = [
+  70,
+  80,
+  90,
+  100,
+  110,
+  120,
+  130,
+  140,
+  150,
+  160,
+];
 
 const emptyResult: AnalysisResult = {
   masterWords: 0,
@@ -91,10 +103,6 @@ const DEFAULT_RULES: Rules = {
   punctuation: "half",
 };
 
-/*
- * These are common spelling variants where British and American English
- * use different spellings. They are intentionally treated as equivalent.
- */
 const spellingEquivalents: Record<string, string> = {
   colour: "color",
   colours: "colors",
@@ -135,10 +143,6 @@ const spellingEquivalents: Record<string, string> = {
   dialogue: "dialog",
 };
 
-/*
- * Common shorthand / formal variants. They are accepted as the same word
- * for checking purposes, e.g. Hon., Hon'ble and Honourable.
- */
 const shortFormGroups = [
   ["hon", "honble", "honourable", "honorable"],
   ["dept", "department"],
@@ -161,16 +165,15 @@ function getDurationOptions(exam: ExamType | ""): number[] {
   if (exam === "SSC Stenographer Grade C & D Skill Test") {
     return [40, 50];
   }
-  /*
-   * Other examinations are kept selectable rather than assigning an
-   * unverified official duration. The user can choose the duration shown
-   * by the application for that test.
-   */
+
   return [10, 20, 30, 40, 50, 60];
 }
 
 function getDefaultDuration(exam: ExamType | ""): number {
-  if (exam === "SSC Stenographer Grade C & D Skill Test") return 40;
+  if (exam === "SSC Stenographer Grade C & D Skill Test") {
+    return 40;
+  }
+
   return 10;
 }
 
@@ -189,7 +192,9 @@ function canonicalWord(word: string): string {
   }
 
   for (const group of shortFormGroups) {
-    if (group.includes(value)) return group[0];
+    if (group.includes(value)) {
+      return group[0];
+    }
   }
 
   return value;
@@ -205,6 +210,7 @@ function wordLettersOnly(word: string): string {
 
 function getPunctuation(word: string): string {
   const match = word.match(/[.,!?;:"“”‘’()[\]{}]+$/);
+
   return match ? match[0] : "";
 }
 
@@ -212,21 +218,57 @@ function removePunctuation(word: string): string {
   return word.replace(/[.,!?;:"“”‘’()[\]{}]/g, "");
 }
 
-function isSameWord(masterWord: string, typedWord: string): boolean {
+function isSameWord(
+  masterWord: string,
+  typedWord: string
+): boolean {
   return canonicalWord(masterWord) === canonicalWord(typedWord);
 }
 
-function isCapitalizationDifference(masterWord: string, typedWord: string): boolean {
-  const a = wordLettersOnly(masterWord);
-  const b = wordLettersOnly(typedWord);
-  return !!a && a === b && masterWord !== typedWord;
+/*
+ * IMPORTANT:
+ *
+ * Punctuation is removed before checking capitalization.
+ *
+ * This prevents:
+ *
+ * Hello,  -> Hello
+ *
+ * from becoming a capitalization mistake.
+ *
+ * But:
+ *
+ * Hello -> hello
+ *
+ * is still treated as capitalization.
+ */
+function isCapitalizationDifference(
+  masterWord: string,
+  typedWord: string
+): boolean {
+  const master = removePunctuation(masterWord);
+  const typed = removePunctuation(typedWord);
+
+  if (!master || !typed) {
+    return false;
+  }
+
+  return (
+    master.toLowerCase() === typed.toLowerCase() &&
+    master !== typed
+  );
 }
 
-function isSpellingDifference(masterWord: string, typedWord: string): boolean {
+function isSpellingDifference(
+  masterWord: string,
+  typedWord: string
+): boolean {
   const a = canonicalWord(masterWord);
   const b = canonicalWord(typedWord);
 
-  if (!a || !b || a === b) return false;
+  if (!a || !b || a === b) {
+    return false;
+  }
 
   const distance = levenshteinDistance(a, b);
   const maxLength = Math.max(a.length, b.length);
@@ -234,11 +276,19 @@ function isSpellingDifference(masterWord: string, typedWord: string): boolean {
   return distance <= 2 || (maxLength >= 5 && distance <= 3);
 }
 
-function levenshteinDistance(a: string, b: string): number {
+function levenshteinDistance(
+  a: string,
+  b: string
+): number {
   const matrix: number[][] = [];
 
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
 
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
@@ -258,168 +308,675 @@ function levenshteinDistance(a: string, b: string): number {
 
 function addWeightedMistake(
   kind: "full" | "half",
-  counters: { fullMistakes: number; halfMistakes: number }
+  counters: {
+    fullMistakes: number;
+    halfMistakes: number;
+  }
 ) {
-  if (kind === "full") counters.fullMistakes++;
-  else counters.halfMistakes++;
+  if (kind === "full") {
+    counters.fullMistakes++;
+  } else {
+    counters.halfMistakes++;
+  }
 }
 
+/*
+ * Checks whether two master words have been typed as one word.
+ *
+ * Example:
+ *
+ * Master:
+ * Common man
+ *
+ * Typed:
+ * Commonman
+ */
+function isMergedWords(
+  firstMasterWord: string,
+  secondMasterWord: string,
+  typedWord: string
+): boolean {
+  const first = canonicalWord(firstMasterWord);
+  const second = canonicalWord(secondMasterWord);
+  const typed = canonicalWord(typedWord);
+
+  if (!first || !second || !typed) {
+    return false;
+  }
+
+  return first + second === typed;
+}
+
+/*
+ * Checks whether one master word has been split into two typed words.
+ *
+ * Example:
+ *
+ * Master:
+ * important
+ *
+ * Typed:
+ * impor tant
+ */
+function isSplitWord(
+  masterWord: string,
+  firstTypedWord: string,
+  secondTypedWord: string
+): boolean {
+  const master = canonicalWord(masterWord);
+  const first = canonicalWord(firstTypedWord);
+  const second = canonicalWord(secondTypedWord);
+
+  if (!master || !first || !second) {
+    return false;
+  }
+
+  return first + second === master;
+}
+
+/*
+ * Dynamic-programming comparison.
+ *
+ * This is the important part of the fix.
+ *
+ * The old comparison was:
+ *
+ * word 1 -> word 1
+ * word 2 -> word 2
+ * word 3 -> word 3
+ *
+ * So if one word was missing/merged/extra, every following word
+ * could become incorrectly marked.
+ *
+ * This version finds the best alignment between master and typed text.
+ */
 function analyzePassages(
   master: string[],
   typed: string[],
   rules: Rules
 ) {
+  const n = master.length;
+  const m = typed.length;
+
+  type Operation =
+    | "correct"
+    | "wrong"
+    | "missing"
+    | "extra"
+    | "merge"
+    | "split";
+
+  type Cell = {
+    cost: number;
+    operation: Operation;
+  };
+
+  const dp: Cell[][] = Array.from(
+    { length: n + 1 },
+    () =>
+      Array.from(
+        { length: m + 1 },
+        (): Cell => ({
+          cost: 0,
+          operation: "correct",
+        })
+      )
+  );
+
+  /*
+   * If there are master words but no typed words,
+   * all those words are missing.
+   */
+  for (let i = 1; i <= n; i++) {
+    dp[i][0] = {
+      cost: i,
+      operation: "missing",
+    };
+  }
+
+  /*
+   * If there are typed words but no master words,
+   * all those words are extra.
+   */
+  for (let j = 1; j <= m; j++) {
+    dp[0][j] = {
+      cost: j,
+      operation: "extra",
+    };
+  }
+
+  /*
+   * Build the alignment table.
+   */
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const masterWord = master[i - 1];
+      const typedWord = typed[j - 1];
+
+      const same = isSameWord(
+        masterWord,
+        typedWord
+      );
+
+      /*
+       * Normal word-to-word comparison.
+       *
+       * Correct = cost 0
+       * Wrong = cost 1
+       */
+      let best: Cell = {
+        cost:
+          dp[i - 1][j - 1].cost +
+          (same ? 0 : 1),
+        operation: same ? "correct" : "wrong",
+      };
+
+      /*
+       * Missing master word.
+       */
+      const missingCandidate: Cell = {
+        cost: dp[i - 1][j].cost + 1,
+        operation: "missing",
+      };
+
+      if (missingCandidate.cost < best.cost) {
+        best = missingCandidate;
+      }
+
+      /*
+       * Extra typed word.
+       */
+      const extraCandidate: Cell = {
+        cost: dp[i][j - 1].cost + 1,
+        operation: "extra",
+      };
+
+      if (extraCandidate.cost < best.cost) {
+        best = extraCandidate;
+      }
+
+      /*
+       * MERGE:
+       *
+       * Master:
+       * Common man is
+       *
+       * Typed:
+       * Commonman is
+       *
+       * The two master words are treated as one typed word.
+       *
+       * <= is intentional here.
+       *
+       * If merge and wrong have the same structural cost,
+       * merge gets priority so that alignment is recovered.
+       */
+      if (
+        i >= 2 &&
+        isMergedWords(
+          master[i - 2],
+          master[i - 1],
+          typedWord
+        )
+      ) {
+        const mergeCandidate: Cell = {
+          cost:
+            dp[i - 2][j - 1].cost + 1,
+          operation: "merge",
+        };
+
+        if (mergeCandidate.cost <= best.cost) {
+          best = mergeCandidate;
+        }
+      }
+
+      /*
+       * SPLIT:
+       *
+       * Master:
+       * important
+       *
+       * Typed:
+       * impor tant
+       */
+      if (
+        j >= 2 &&
+        isSplitWord(
+          masterWord,
+          typed[j - 2],
+          typed[j - 1]
+        )
+      ) {
+        const splitCandidate: Cell = {
+          cost:
+            dp[i - 1][j - 2].cost + 1,
+          operation: "split",
+        };
+
+        if (splitCandidate.cost <= best.cost) {
+          best = splitCandidate;
+        }
+      }
+
+      dp[i][j] = best;
+    }
+  }
+
+  type Step = {
+    operation: Operation;
+    masterStart: number;
+    masterEnd: number;
+    typedStart: number;
+    typedEnd: number;
+  };
+
+  const steps: Step[] = [];
+
+  let i = n;
+  let j = m;
+
+  /*
+   * Go backwards through the DP table to recover
+   * the actual alignment.
+   */
+  while (i > 0 || j > 0) {
+    const cell = dp[i][j];
+
+    if (
+      cell.operation === "correct" ||
+      cell.operation === "wrong"
+    ) {
+      steps.push({
+        operation: cell.operation,
+        masterStart: i - 1,
+        masterEnd: i,
+        typedStart: j - 1,
+        typedEnd: j,
+      });
+
+      i--;
+      j--;
+
+      continue;
+    }
+
+    if (cell.operation === "missing") {
+      steps.push({
+        operation: "missing",
+        masterStart: i - 1,
+        masterEnd: i,
+        typedStart: j,
+        typedEnd: j,
+      });
+
+      i--;
+
+      continue;
+    }
+
+    if (cell.operation === "extra") {
+      steps.push({
+        operation: "extra",
+        masterStart: i,
+        masterEnd: i,
+        typedStart: j - 1,
+        typedEnd: j,
+      });
+
+      j--;
+
+      continue;
+    }
+
+    if (cell.operation === "merge") {
+      steps.push({
+        operation: "merge",
+        masterStart: i - 2,
+        masterEnd: i,
+        typedStart: j - 1,
+        typedEnd: j,
+      });
+
+      i -= 2;
+      j--;
+
+      continue;
+    }
+
+    if (cell.operation === "split") {
+      steps.push({
+        operation: "split",
+        masterStart: i - 1,
+        masterEnd: i,
+        typedStart: j - 2,
+        typedEnd: j,
+      });
+
+      i--;
+      j -= 2;
+
+      continue;
+    }
+
+    break;
+  }
+
+  steps.reverse();
+
   const highlights: HighlightItem[] = [];
+
   let wrongWords = 0;
   let missingWords = 0;
   let extraWords = 0;
   let spellingMistakes = 0;
   let capitalizationMistakes = 0;
   let punctuationMistakes = 0;
-  let fullMistakes = 0;
-  let halfMistakes = 0;
 
-  const counters = { fullMistakes, halfMistakes };
+  const counters = {
+    fullMistakes: 0,
+    halfMistakes: 0,
+  };
 
-  let i = 0;
-  let j = 0;
+  /*
+   * Convert the alignment into the same result format
+   * your existing UI already uses.
+   */
+  for (const step of steps) {
+    /*
+     * ----------------------------------------
+     * CORRECT / WRONG
+     * ----------------------------------------
+     */
+    if (
+      step.operation === "correct" ||
+      step.operation === "wrong"
+    ) {
+      const masterWord = master[step.masterStart];
+      const typedWord = typed[step.typedStart];
 
-  while (i < master.length || j < typed.length) {
-    const masterWord = master[i];
-    const typedWord = typed[j];
-
-    if (masterWord === undefined && typedWord !== undefined) {
-      extraWords++;
-      counters.fullMistakes++;
-      highlights.push({
-        type: "extra",
-        word: typedWord,
-        index: j,
-      });
-      j++;
-      continue;
-    }
-
-    if (typedWord === undefined && masterWord !== undefined) {
-      missingWords++;
-      counters.fullMistakes++;
-      highlights.push({
-        type: "missing",
-        word: `[${masterWord}]`,
-        correctWord: masterWord,
-        index: j,
-      });
-      i++;
-      continue;
-    }
-
-    if (!masterWord || !typedWord) {
-      i++;
-      j++;
-      continue;
-    }
-
-    if (isSameWord(masterWord, typedWord)) {
-      const capDifference = isCapitalizationDifference(masterWord, typedWord);
-      const masterPunctuation = getPunctuation(masterWord);
-      const typedPunctuation = getPunctuation(typedWord);
-      const punctuationDifference = masterPunctuation !== typedPunctuation;
-
-      if (capDifference) {
-        capitalizationMistakes++;
-        addWeightedMistake(rules.capitalization, counters);
-        highlights.push({
-          type: "capitalization",
-          word: typedWord,
-          correctWord: masterWord,
-          index: j,
-        });
-      } else if (punctuationDifference && !isIgnorablePunctuationDifference(masterPunctuation, typedPunctuation)) {
-        punctuationMistakes++;
-        addWeightedMistake(rules.punctuation, counters);
-        highlights.push({
-          type: "punctuation",
-          word: typedWord,
-          correctWord: masterWord,
-          index: j,
-        });
-      } else {
-        highlights.push({
-          type: "correct",
-          word: typedWord,
-          index: j,
-        });
+      if (!masterWord || !typedWord) {
+        continue;
       }
 
-      i++;
-      j++;
-      continue;
-    }
+      /*
+       * Same canonical word.
+       *
+       * This includes words where only punctuation differs.
+       */
+      if (isSameWord(masterWord, typedWord)) {
+        const capDifference =
+          isCapitalizationDifference(
+            masterWord,
+            typedWord
+          );
 
-    if (isSpellingDifference(masterWord, typedWord)) {
-      spellingMistakes++;
-      addWeightedMistake(rules.spelling, counters);
+        const masterPunctuation =
+          getPunctuation(masterWord);
+
+        const typedPunctuation =
+          getPunctuation(typedWord);
+
+        const punctuationDifference =
+          masterPunctuation !== typedPunctuation;
+
+        /*
+         * Capitalization is checked first,
+         * but the capitalization helper now ignores punctuation.
+         */
+        if (capDifference) {
+          capitalizationMistakes++;
+
+          addWeightedMistake(
+            rules.capitalization,
+            counters
+          );
+
+          highlights.push({
+            type: "capitalization",
+            word: typedWord,
+            correctWord: masterWord,
+            index: step.typedStart,
+          });
+        }
+
+        /*
+         * Comma is deliberately ignored.
+         *
+         * Hyphen/slash are also ignored according to
+         * your existing rule.
+         */
+        else if (
+          punctuationDifference &&
+          !isIgnorablePunctuationDifference(
+            masterPunctuation,
+            typedPunctuation
+          )
+        ) {
+          punctuationMistakes++;
+
+          addWeightedMistake(
+            rules.punctuation,
+            counters
+          );
+
+          highlights.push({
+            type: "punctuation",
+            word: typedWord,
+            correctWord: masterWord,
+            index: step.typedStart,
+          });
+        }
+
+        /*
+         * Otherwise the word is correct.
+         */
+        else {
+          highlights.push({
+            type: "correct",
+            word: typedWord,
+            index: step.typedStart,
+          });
+        }
+
+        continue;
+      }
+
+      /*
+       * Spelling difference.
+       */
+      if (
+        isSpellingDifference(
+          masterWord,
+          typedWord
+        )
+      ) {
+        spellingMistakes++;
+
+        addWeightedMistake(
+          rules.spelling,
+          counters
+        );
+
+        highlights.push({
+          type: "spelling",
+          word: typedWord,
+          correctWord: masterWord,
+          index: step.typedStart,
+        });
+
+        continue;
+      }
+
+      /*
+       * Otherwise it is a full wrong-word mistake.
+       */
+      wrongWords++;
+
+      counters.fullMistakes++;
+
       highlights.push({
-        type: "spelling",
+        type: "wrong",
         word: typedWord,
         correctWord: masterWord,
-        index: j,
+        index: step.typedStart,
       });
-      i++;
-      j++;
+
       continue;
     }
 
     /*
-     * If the next typed word matches the current master word, current typed
-     * word is an extra word.
+     * ----------------------------------------
+     * MISSING WORD
+     * ----------------------------------------
      */
-    if (
-      typed[j + 1] !== undefined &&
-      isSameWord(masterWord, typed[j + 1])
-    ) {
-      extraWords++;
-      counters.fullMistakes++;
-      highlights.push({
-        type: "extra",
-        word: typedWord,
-        index: j,
-      });
-      j++;
-      continue;
-    }
+    if (step.operation === "missing") {
+      const masterWord = master[step.masterStart];
 
-    /*
-     * If the next master word matches the current typed word, current master
-     * word is missing.
-     */
-    if (
-      master[i + 1] !== undefined &&
-      isSameWord(master[i + 1], typedWord)
-    ) {
+      if (!masterWord) {
+        continue;
+      }
+
       missingWords++;
+
       counters.fullMistakes++;
+
       highlights.push({
         type: "missing",
         word: `[${masterWord}]`,
         correctWord: masterWord,
-        index: j,
+        index: step.typedStart,
       });
-      i++;
+
       continue;
     }
 
-    wrongWords++;
-    counters.fullMistakes++;
-    highlights.push({
-      type: "wrong",
-      word: typedWord,
-      correctWord: masterWord,
-      index: j,
-    });
+    /*
+     * ----------------------------------------
+     * EXTRA WORD
+     * ----------------------------------------
+     */
+    if (step.operation === "extra") {
+      const typedWord = typed[step.typedStart];
 
-    i++;
-    j++;
+      if (!typedWord) {
+        continue;
+      }
+
+      extraWords++;
+
+      counters.fullMistakes++;
+
+      highlights.push({
+        type: "extra",
+        word: typedWord,
+        index: step.typedStart,
+      });
+
+      continue;
+    }
+
+    /*
+     * ----------------------------------------
+     * MERGED WORD
+     * ----------------------------------------
+     *
+     * Example:
+     *
+     * Master:
+     * Common man is more important.
+     *
+     * Typed:
+     * Commonman is more important.
+     *
+     * Result:
+     * Commonman (Common man)
+     *
+     * AND importantly:
+     *
+     * is
+     * more
+     * important.
+     *
+     * stay correct.
+     */
+    if (step.operation === "merge") {
+      const firstMasterWord =
+        master[step.masterStart];
+
+      const secondMasterWord =
+        master[step.masterStart + 1];
+
+      const typedWord =
+        typed[step.typedStart];
+
+      if (
+        !firstMasterWord ||
+        !secondMasterWord ||
+        !typedWord
+      ) {
+        continue;
+      }
+
+      wrongWords++;
+
+      counters.fullMistakes++;
+
+      highlights.push({
+        type: "wrong",
+        word: typedWord,
+        correctWord:
+          `${firstMasterWord} ${secondMasterWord}`,
+        index: step.typedStart,
+      });
+
+      continue;
+    }
+
+    /*
+     * ----------------------------------------
+     * SPLIT WORD
+     * ----------------------------------------
+     *
+     * Example:
+     *
+     * Master:
+     * important
+     *
+     * Typed:
+     * impor tant
+     */
+    if (step.operation === "split") {
+      const masterWord =
+        master[step.masterStart];
+
+      const firstTypedWord =
+        typed[step.typedStart];
+
+      const secondTypedWord =
+        typed[step.typedStart + 1];
+
+      if (
+        !masterWord ||
+        !firstTypedWord ||
+        !secondTypedWord
+      ) {
+        continue;
+      }
+
+      wrongWords++;
+
+      counters.fullMistakes++;
+
+      highlights.push({
+        type: "wrong",
+        word:
+          `${firstTypedWord} ${secondTypedWord}`,
+        correctWord: masterWord,
+        index: step.typedStart,
+      });
+
+      continue;
+    }
   }
 
   const totalMistakes =
@@ -445,170 +1002,292 @@ function analyzePassages(
 }
 
 /*
- * Hyphen and slash differences are deliberately ignored.
- * Examples:
- *   "court-order" vs "court order"
- *   "and/or" vs "and or"
+ * Comma is ignored.
  *
- * A punctuation mark itself is still checked when it is a real punctuation
- * difference such as a comma, full stop, question mark, etc.
+ * Hyphen and slash differences are also ignored,
+ * as in your previous rule.
+ *
+ * Example:
+ *
+ * Hello, vs Hello
+ * => no punctuation mistake
  */
-function isIgnorablePunctuationDifference(a: string, b: string): boolean {
-  const clean = (value: string) => value.replace(/[-/]/g, "");
+function isIgnorablePunctuationDifference(
+  a: string,
+  b: string
+): boolean {
+  const clean = (value: string) =>
+    value
+      .replace(/,/g, "")
+      .replace(/[-/]/g, "");
+
   return clean(a) === clean(b);
 }
 
 function formatTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
-  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+
+  return `${minutes}:${String(
+    remainingSeconds
+  ).padStart(2, "0")}`;
 }
 
-function getHighlightStyle(type: MistakeType | "correct"): string {
+function getHighlightStyle(
+  type: MistakeType | "correct"
+): string {
   switch (type) {
     case "wrong":
       return "bg-red-200 text-red-900";
+
     case "missing":
       return "bg-yellow-200 text-yellow-900";
+
     case "extra":
       return "bg-orange-200 text-orange-900";
+
     case "spelling":
       return "bg-purple-200 text-purple-900";
+
     case "capitalization":
       return "bg-pink-200 text-pink-900";
+
     case "punctuation":
       return "bg-blue-200 text-blue-900";
+
     default:
       return "";
   }
 }
 
-function getMistakeLabel(type: MistakeType | "correct"): string {
+function getMistakeLabel(
+  type: MistakeType | "correct"
+): string {
   switch (type) {
     case "wrong":
       return "Wrong word";
+
     case "missing":
       return "Missing word";
+
     case "extra":
       return "Extra word";
+
     case "spelling":
       return "Spelling mistake";
+
     case "capitalization":
       return "Capitalization mistake";
+
     case "punctuation":
       return "Punctuation mistake";
+
     default:
       return "";
   }
 }
 
 export default function CheckerPage() {
-  const [screen, setScreen] = useState<Screen>("start");
-  const [masterPassage, setMasterPassage] = useState("");
-  const [typedPassage, setTypedPassage] = useState("");
+  const [screen, setScreen] =
+    useState<Screen>("start");
 
-  const [method, setMethod] = useState<Method>("exams");
-  const [exam, setExam] = useState<ExamType | "">("");
+  const [masterPassage, setMasterPassage] =
+    useState("");
 
-  const [rules, setRules] = useState<Rules>(DEFAULT_RULES);
-  const [duration, setDuration] = useState(40);
-  const [speed, setSpeed] = useState(100);
+  const [typedPassage, setTypedPassage] =
+    useState("");
 
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [result, setResult] = useState<AnalysisResult>(emptyResult);
-  const [saving, setSaving] = useState(false);
+  const [method, setMethod] =
+    useState<Method>("exams");
 
-  const masterWords = useMemo(() => getWords(masterPassage).length, [masterPassage]);
+  const [exam, setExam] =
+    useState<ExamType | "">("");
 
-  const typedWords = useMemo(() => getWords(typedPassage).length, [typedPassage]);
+  const [rules, setRules] =
+    useState<Rules>(DEFAULT_RULES);
+
+  const [duration, setDuration] =
+    useState(40);
+
+  const [speed, setSpeed] =
+    useState(100);
+
+  const [timeLeft, setTimeLeft] =
+    useState(0);
+
+  const [startedAt, setStartedAt] =
+    useState<number | null>(null);
+
+  const [result, setResult] =
+    useState<AnalysisResult>(emptyResult);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const masterWords = useMemo(
+    () => getWords(masterPassage).length,
+    [masterPassage]
+  );
+
+  const typedWords = useMemo(
+    () => getWords(typedPassage).length,
+    [typedPassage]
+  );
 
   useEffect(() => {
-    if (screen !== "typing" || timeLeft <= 0) return;
+    if (
+      screen !== "typing" ||
+      timeLeft <= 0
+    ) {
+      return;
+    }
 
     const timer = window.setInterval(() => {
       setTimeLeft((current) => {
         if (current <= 1) {
           window.clearInterval(timer);
-          setTimeout(() => finishTest(), 0);
+
+          setTimeout(() => {
+            finishTest();
+          }, 0);
+
           return 0;
         }
+
         return current - 1;
       });
     }, 1000);
 
-    return () => window.clearInterval(timer);
+    return () =>
+      window.clearInterval(timer);
   }, [screen, timeLeft]);
 
-  function handleExamChange(value: ExamType) {
+  function handleExamChange(
+    value: ExamType
+  ) {
     setExam(value);
-    const newDuration = getDefaultDuration(value);
+
+    const newDuration =
+      getDefaultDuration(value);
+
     setDuration(newDuration);
   }
 
   function startTest() {
-    if (!masterPassage.trim()) return;
-    if (method === "exams" && !exam) return;
+    if (!masterPassage.trim()) {
+      return;
+    }
+
+    if (method === "exams" && !exam) {
+      return;
+    }
 
     setTypedPassage("");
+
     setTimeLeft(duration * 60);
+
     setStartedAt(Date.now());
+
     setScreen("typing");
   }
 
   async function finishTest() {
-    if (saving) return;
+    if (saving) {
+      return;
+    }
 
-    const master = getWords(masterPassage);
-    const typed = getWords(typedPassage);
+    const master =
+      getWords(masterPassage);
 
-    const analysis = analyzePassages(master, typed, rules);
+    const typed =
+      getWords(typedPassage);
+
+    const analysis =
+      analyzePassages(
+        master,
+        typed,
+        rules
+      );
+
     const endTime = Date.now();
 
     const elapsedSeconds = startedAt
       ? Math.max(
           1,
-          Math.min(duration * 60, Math.floor((endTime - startedAt) / 1000))
+          Math.min(
+            duration * 60,
+            Math.floor(
+              (endTime - startedAt) /
+                1000
+            )
+          )
         )
       : 1;
 
-    const elapsedMinutes = elapsedSeconds / 60;
+    const elapsedMinutes =
+      elapsedSeconds / 60;
+
     const calculatedWpm =
-      elapsedMinutes > 0 ? Math.round(typed.length / elapsedMinutes) : 0;
+      elapsedMinutes > 0
+        ? Math.round(
+            typed.length /
+              elapsedMinutes
+          )
+        : 0;
 
     const weightedMistakes =
-      analysis.fullMistakes + analysis.halfMistakes * 0.5;
+      analysis.fullMistakes +
+      analysis.halfMistakes * 0.5;
 
     const accuracy =
       master.length > 0
         ? Math.max(
             0,
-            Math.min(100, 100 - (weightedMistakes / master.length) * 100)
+            Math.min(
+              100,
+              100 -
+                (weightedMistakes /
+                  master.length) *
+                  100
+            )
           )
         : 0;
 
-    const errorPercentage = Math.max(0, 100 - accuracy);
+    const errorPercentage =
+      Math.max(
+        0,
+        100 - accuracy
+      );
 
     const finalResult: AnalysisResult = {
       ...analysis,
-      masterWords: master.length,
-      typedWords: typed.length,
+      masterWords:
+        master.length,
+      typedWords:
+        typed.length,
       accuracy,
       errorPercentage,
       wpm: calculatedWpm,
-      timeTaken: elapsedSeconds,
+      timeTaken:
+        elapsedSeconds,
     };
 
     setResult(finalResult);
 
-    const currentUser = auth.currentUser;
+    const currentUser =
+      auth.currentUser;
 
     if (currentUser) {
       setSaving(true);
 
       try {
         await addDoc(
-          collection(db, "users", currentUser.uid, "tests"),
+          collection(
+            db,
+            "users",
+            currentUser.uid,
+            "tests"
+          ),
           {
             method,
             exam: exam || "Manual",
@@ -618,17 +1297,24 @@ export default function CheckerPage() {
             masterPassage,
             typedPassage,
             ...analysis,
-            masterWords: master.length,
-            typedWords: typed.length,
+            masterWords:
+              master.length,
+            typedWords:
+              typed.length,
             accuracy,
             errorPercentage,
             wpm: calculatedWpm,
-            timeTaken: elapsedSeconds,
-            createdAt: serverTimestamp(),
+            timeTaken:
+              elapsedSeconds,
+            createdAt:
+              serverTimestamp(),
           }
         );
       } catch (error) {
-        console.error("Error saving test:", error);
+        console.error(
+          "Error saving test:",
+          error
+        );
       } finally {
         setSaving(false);
       }
@@ -639,15 +1325,25 @@ export default function CheckerPage() {
 
   function resetTest() {
     setScreen("start");
+
     setMasterPassage("");
+
     setTypedPassage("");
+
     setMethod("exams");
+
     setExam("");
+
     setRules(DEFAULT_RULES);
+
     setDuration(40);
+
     setSpeed(100);
+
     setTimeLeft(0);
+
     setStartedAt(null);
+
     setResult(emptyResult);
   }
 
@@ -656,7 +1352,10 @@ export default function CheckerPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <div>
-            <h1 className="text-2xl font-bold text-blue-700">StenoCheck</h1>
+            <h1 className="text-2xl font-bold text-blue-700">
+              StenoCheck
+            </h1>
+
             <p className="text-sm text-slate-500">
               Stenography Practice & Analysis
             </p>
@@ -664,24 +1363,41 @@ export default function CheckerPage() {
 
           {screen !== "start" && (
             <div className="max-w-[55%] rounded-lg bg-blue-50 px-4 py-2 text-right text-sm font-semibold text-blue-700">
-              {exam || "Manual Checking"}
+              {exam ||
+                "Manual Checking"}
             </div>
           )}
         </div>
       </header>
 
       {screen === "start" && (
-        <StartScreen onStart={() => setScreen("passage")} />
+        <StartScreen
+          onStart={() =>
+            setScreen("passage")
+          }
+        />
       )}
 
       {screen === "passage" && (
         <PassageScreen
-          masterPassage={masterPassage}
-          setMasterPassage={setMasterPassage}
-          wordCount={masterWords}
-          onBack={() => setScreen("start")}
+          masterPassage={
+            masterPassage
+          }
+          setMasterPassage={
+            setMasterPassage
+          }
+          wordCount={
+            masterWords
+          }
+          onBack={() =>
+            setScreen("start")
+          }
           onContinue={() => {
-            if (masterPassage.trim()) setScreen("exam");
+            if (
+              masterPassage.trim()
+            ) {
+              setScreen("exam");
+            }
           }}
         />
       )}
@@ -691,14 +1407,20 @@ export default function CheckerPage() {
           method={method}
           setMethod={setMethod}
           exam={exam}
-          setExam={handleExamChange}
+          setExam={
+            handleExamChange
+          }
           rules={rules}
           setRules={setRules}
           duration={duration}
-          setDuration={setDuration}
+          setDuration={
+            setDuration
+          }
           speed={speed}
           setSpeed={setSpeed}
-          onBack={() => setScreen("passage")}
+          onBack={() =>
+            setScreen("passage")
+          }
           onStart={startTest}
         />
       )}
@@ -709,8 +1431,12 @@ export default function CheckerPage() {
           duration={duration}
           speed={speed}
           timeLeft={timeLeft}
-          typedPassage={typedPassage}
-          setTypedPassage={setTypedPassage}
+          typedPassage={
+            typedPassage
+          }
+          setTypedPassage={
+            setTypedPassage
+          }
           onSubmit={finishTest}
         />
       )}
@@ -718,17 +1444,27 @@ export default function CheckerPage() {
       {screen === "result" && (
         <ResultScreen
           result={result}
-          masterPassage={masterPassage}
-          typedPassage={typedPassage}
+          masterPassage={
+            masterPassage
+          }
+          typedPassage={
+            typedPassage
+          }
           saving={saving}
-          onNewTest={resetTest}
+          onNewTest={
+            resetTest
+          }
         />
       )}
     </main>
   );
 }
 
-function StartScreen({ onStart }: { onStart: () => void }) {
+function StartScreen({
+  onStart,
+}: {
+  onStart: () => void;
+}) {
   return (
     <section className="mx-auto flex min-h-[calc(100vh-90px)] max-w-5xl items-center justify-center px-6 py-12">
       <div className="w-full rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm sm:p-12">
@@ -740,11 +1476,16 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Steno Practice
         </p>
 
-        <h2 className="mt-2 text-4xl font-bold">Check Your Own Passage</h2>
+        <h2 className="mt-2 text-4xl font-bold">
+          Check Your Own Passage
+        </h2>
 
         <p className="mx-auto mt-4 max-w-2xl text-slate-500">
-          Paste your original passage, choose an examination or manual checking
-          rules, complete the test, and get a detailed mistake analysis.
+          Paste your original passage,
+          choose an examination or
+          manual checking rules,
+          complete the test, and get
+          a detailed mistake analysis.
         </p>
 
         <button
@@ -767,7 +1508,9 @@ function PassageScreen({
   onContinue,
 }: {
   masterPassage: string;
-  setMasterPassage: (value: string) => void;
+  setMasterPassage: (
+    value: string
+  ) => void;
   wordCount: number;
   onBack: () => void;
   onContinue: () => void;
@@ -783,9 +1526,13 @@ function PassageScreen({
       <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-bold">Master Passage</h3>
+            <h3 className="text-lg font-bold">
+              Master Passage
+            </h3>
+
             <p className="mt-1 text-sm text-slate-500">
-              Paste the complete original passage here.
+              Paste the complete original
+              passage here.
             </p>
           </div>
 
@@ -796,7 +1543,11 @@ function PassageScreen({
 
         <textarea
           value={masterPassage}
-          onChange={(e) => setMasterPassage(e.target.value)}
+          onChange={(e) =>
+            setMasterPassage(
+              e.target.value
+            )
+          }
           placeholder="Paste your master passage here..."
           className="mt-5 h-80 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-5 text-base leading-7 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
         />
@@ -812,8 +1563,12 @@ function PassageScreen({
 
           <button
             type="button"
-            onClick={onContinue}
-            disabled={!masterPassage.trim()}
+            onClick={
+              onContinue
+            }
+            disabled={
+              !masterPassage.trim()
+            }
             className="rounded-xl bg-blue-600 px-7 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Continue →
@@ -839,22 +1594,39 @@ function ExamScreen({
   onStart,
 }: {
   method: Method;
-  setMethod: (value: Method) => void;
+  setMethod: (
+    value: Method
+  ) => void;
   exam: ExamType | "";
-  setExam: (value: ExamType) => void;
+  setExam: (
+    value: ExamType
+  ) => void;
   rules: Rules;
-  setRules: (value: Rules) => void;
+  setRules: (
+    value: Rules
+  ) => void;
   duration: number;
-  setDuration: (value: number) => void;
+  setDuration: (
+    value: number
+  ) => void;
   speed: number;
-  setSpeed: (value: number) => void;
+  setSpeed: (
+    value: number
+  ) => void;
   onBack: () => void;
   onStart: () => void;
 }) {
-  const durationOptions = getDurationOptions(exam);
+  const durationOptions =
+    getDurationOptions(exam);
 
-  function updateRule(key: keyof Rules, value: MistakeWeight) {
-    setRules({ ...rules, [key]: value });
+  function updateRule(
+    key: keyof Rules,
+    value: MistakeWeight
+  ) {
+    setRules({
+      ...rules,
+      [key]: value,
+    });
   }
 
   return (
@@ -869,31 +1641,43 @@ function ExamScreen({
         <div className="grid gap-3 sm:grid-cols-2">
           <button
             type="button"
-            onClick={() => setMethod("exams")}
+            onClick={() =>
+              setMethod("exams")
+            }
             className={`rounded-xl border p-5 text-left ${
               method === "exams"
                 ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
                 : "border-slate-200 hover:bg-slate-50"
             }`}
           >
-            <p className="font-bold">By Exams</p>
+            <p className="font-bold">
+              By Exams
+            </p>
+
             <p className="mt-1 text-sm text-slate-500">
-              Use an examination-specific checking setup.
+              Use an examination-specific
+              checking setup.
             </p>
           </button>
 
           <button
             type="button"
-            onClick={() => setMethod("manual")}
+            onClick={() =>
+              setMethod("manual")
+            }
             className={`rounded-xl border p-5 text-left ${
               method === "manual"
                 ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
                 : "border-slate-200 hover:bg-slate-50"
             }`}
           >
-            <p className="font-bold">Manual</p>
+            <p className="font-bold">
+              Manual
+            </p>
+
             <p className="mt-1 text-sm text-slate-500">
-              Decide which mistakes count as full or half.
+              Decide which mistakes count
+              as full or half.
             </p>
           </button>
         </div>
@@ -908,45 +1692,84 @@ function ExamScreen({
 
             <select
               value={exam}
-              onChange={(e) => setExam(e.target.value as ExamType)}
+              onChange={(e) =>
+                setExam(
+                  e.target
+                    .value as ExamType
+                )
+              }
               className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-base font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             >
-              <option value="">Click to search/select exam</option>
-              {examOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
+              <option value="">
+                Click to search/select exam
+              </option>
+
+              {examOptions.map(
+                (item) => (
+                  <option
+                    key={item}
+                    value={item}
+                  >
+                    {item}
+                  </option>
+                )
+              )}
             </select>
           </div>
 
-          <RuleSummary exam={exam} rules={rules} />
+          <RuleSummary
+            exam={exam}
+            rules={rules}
+          />
         </div>
       ) : (
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-xl font-bold">Manual Mistake Settings</h3>
+          <h3 className="text-xl font-bold">
+            Manual Mistake Settings
+          </h3>
+
           <p className="mt-1 text-sm text-slate-500">
-            Choose whether each selected mistake is counted as a full or half
-            mistake.
+            Choose whether each selected
+            mistake is counted as a full
+            or half mistake.
           </p>
 
           <div className="mt-6 space-y-4">
             <ManualRuleRow
               title="1. Count Spelling Mistakes"
               value={rules.spelling}
-              onChange={(value) => updateRule("spelling", value)}
+              onChange={(value) =>
+                updateRule(
+                  "spelling",
+                  value
+                )
+              }
             />
 
             <ManualRuleRow
               title="2. Count Capitalization Mistakes"
-              value={rules.capitalization}
-              onChange={(value) => updateRule("capitalization", value)}
+              value={
+                rules.capitalization
+              }
+              onChange={(value) =>
+                updateRule(
+                  "capitalization",
+                  value
+                )
+              }
             />
 
             <ManualRuleRow
               title="3. Count Punctuation Mistakes"
-              value={rules.punctuation}
-              onChange={(value) => updateRule("punctuation", value)}
+              value={
+                rules.punctuation
+              }
+              onChange={(value) =>
+                updateRule(
+                  "punctuation",
+                  value
+                )
+              }
             />
           </div>
         </div>
@@ -954,46 +1777,74 @@ function ExamScreen({
 
       <div className="mt-6 grid gap-6 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-xl font-bold">Time Duration</h3>
+          <h3 className="text-xl font-bold">
+            Time Duration
+          </h3>
+
           <p className="mt-1 text-sm text-slate-500">
             Select the time for this test.
           </p>
 
           <select
             value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
+            onChange={(e) =>
+              setDuration(
+                Number(e.target.value)
+              )
+            }
             className="mt-5 w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-base font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
-            {durationOptions.map((value) => (
-              <option key={value} value={value}>
-                {value} minutes
-              </option>
-            ))}
+            {durationOptions.map(
+              (value) => (
+                <option
+                  key={value}
+                  value={value}
+                >
+                  {value} minutes
+                </option>
+              )
+            )}
           </select>
 
-          {method === "exams" && exam === "SSC Stenographer Grade C & D Skill Test" && (
-            <p className="mt-3 text-xs text-slate-500">
-              Grade C: 40 minutes · Grade D: 50 minutes
-            </p>
-          )}
+          {method === "exams" &&
+            exam ===
+              "SSC Stenographer Grade C & D Skill Test" && (
+              <p className="mt-3 text-xs text-slate-500">
+                Grade C: 40 minutes ·
+                Grade D: 50 minutes
+              </p>
+            )}
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-xl font-bold">Target Speed</h3>
+          <h3 className="text-xl font-bold">
+            Target Speed
+          </h3>
+
           <p className="mt-1 text-sm text-slate-500">
-            Select the target dictation/typing speed.
+            Select the target
+            dictation/typing speed.
           </p>
 
           <select
             value={speed}
-            onChange={(e) => setSpeed(Number(e.target.value))}
+            onChange={(e) =>
+              setSpeed(
+                Number(e.target.value)
+              )
+            }
             className="mt-5 w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-base font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
-            {speedOptions.map((value) => (
-              <option key={value} value={value}>
-                {value} WPM
-              </option>
-            ))}
+            {speedOptions.map(
+              (value) => (
+                <option
+                  key={value}
+                  value={value}
+                >
+                  {value} WPM
+                </option>
+              )
+            )}
           </select>
         </div>
       </div>
@@ -1010,7 +1861,10 @@ function ExamScreen({
         <button
           type="button"
           onClick={onStart}
-          disabled={method === "exams" && !exam}
+          disabled={
+            method === "exams" &&
+            !exam
+          }
           className="rounded-xl bg-blue-600 px-8 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Start Test →
@@ -1029,7 +1883,9 @@ function RuleSummary({
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h3 className="text-xl font-bold">Checking Rules</h3>
+      <h3 className="text-xl font-bold">
+        Checking Rules
+      </h3>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <RuleBox
@@ -1040,19 +1896,34 @@ function RuleSummary({
 
         <RuleBox
           title="Spelling"
-          text={`Counted as ${rules.spelling === "full" ? "Full" : "Half"} Mistake`}
+          text={`Counted as ${
+            rules.spelling ===
+            "full"
+              ? "Full"
+              : "Half"
+          } Mistake`}
           color="purple"
         />
 
         <RuleBox
           title="Capitalization"
-          text={`Counted as ${rules.capitalization === "full" ? "Full" : "Half"} Mistake`}
+          text={`Counted as ${
+            rules.capitalization ===
+            "full"
+              ? "Full"
+              : "Half"
+          } Mistake`}
           color="pink"
         />
 
         <RuleBox
           title="Punctuation"
-          text={`Counted as ${rules.punctuation === "full" ? "Full" : "Half"} Mistake`}
+          text={`Counted as ${
+            rules.punctuation ===
+            "full"
+              ? "Full"
+              : "Half"
+          } Mistake`}
           color="blue"
         />
 
@@ -1071,7 +1942,8 @@ function RuleSummary({
 
       {exam && (
         <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-          Selected exam: <strong>{exam}</strong>
+          Selected exam:{" "}
+          <strong>{exam}</strong>
         </p>
       )}
     </div>
@@ -1085,17 +1957,23 @@ function ManualRuleRow({
 }: {
   title: string;
   value: MistakeWeight;
-  onChange: (value: MistakeWeight) => void;
+  onChange: (
+    value: MistakeWeight
+  ) => void;
 }) {
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="font-semibold">{title}</p>
+        <p className="font-semibold">
+          {title}
+        </p>
 
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => onChange("half")}
+            onClick={() =>
+              onChange("half")
+            }
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${
               value === "half"
                 ? "bg-yellow-500 text-white"
@@ -1107,7 +1985,9 @@ function ManualRuleRow({
 
           <button
             type="button"
-            onClick={() => onChange("full")}
+            onClick={() =>
+              onChange("full")
+            }
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${
               value === "full"
                 ? "bg-red-600 text-white"
@@ -1136,11 +2016,16 @@ function TypingScreen({
   speed: number;
   timeLeft: number;
   typedPassage: string;
-  setTypedPassage: (value: string) => void;
+  setTypedPassage: (
+    value: string
+  ) => void;
   onSubmit: () => void;
 }) {
-  const minutes = Math.floor(timeLeft / 60);
-  const seconds = timeLeft % 60;
+  const minutes =
+    Math.floor(timeLeft / 60);
+
+  const seconds =
+    timeLeft % 60;
 
   return (
     <section className="mx-auto max-w-6xl px-6 py-8">
@@ -1148,15 +2033,24 @@ function TypingScreen({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-blue-600">
-              {exam || "Manual Checking"}
+              {exam ||
+                "Manual Checking"}
             </p>
-            <h2 className="mt-1 text-xl font-bold">Dictation Test</h2>
+
+            <h2 className="mt-1 text-xl font-bold">
+              Dictation Test
+            </h2>
           </div>
 
           <div className="flex gap-3">
             <div className="rounded-xl bg-slate-100 px-4 py-3 text-center">
-              <p className="text-xs text-slate-500">Target Speed</p>
-              <p className="font-bold">{speed} WPM</p>
+              <p className="text-xs text-slate-500">
+                Target Speed
+              </p>
+
+              <p className="font-bold">
+                {speed} WPM
+              </p>
             </div>
 
             <div
@@ -1166,10 +2060,18 @@ function TypingScreen({
                   : "bg-blue-50 text-blue-700"
               }`}
             >
-              <p className="text-xs opacity-70">Time Left</p>
+              <p className="text-xs opacity-70">
+                Time Left
+              </p>
+
               <p className="font-mono text-xl font-bold">
-                {String(minutes).padStart(2, "0")}:
-                {String(seconds).padStart(2, "0")}
+                {String(
+                  minutes
+                ).padStart(2, "0")}
+                :
+                {String(
+                  seconds
+                ).padStart(2, "0")}
               </p>
             </div>
           </div>
@@ -1178,23 +2080,36 @@ function TypingScreen({
 
       <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4">
-          <h3 className="text-lg font-bold">Type or Paste Your Transcription</h3>
+          <h3 className="text-lg font-bold">
+            Type or Paste Your
+            Transcription
+          </h3>
+
           <p className="mt-1 text-sm text-slate-500">
-            Your master passage is hidden during the test.
+            Your master passage is
+            hidden during the test.
           </p>
         </div>
 
         <textarea
           autoFocus
           value={typedPassage}
-          onChange={(e) => setTypedPassage(e.target.value)}
+          onChange={(e) =>
+            setTypedPassage(
+              e.target.value
+            )
+          }
           placeholder="Start typing or paste your transcription here..."
           className="h-[55vh] min-h-[400px] w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-5 text-base leading-8 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
         />
 
         <div className="mt-5 flex items-center justify-between">
           <p className="text-sm text-slate-500">
-            {getWords(typedPassage).length} words typed · {duration} minute test
+            {getWords(
+              typedPassage
+            ).length}{" "}
+            words typed ·{" "}
+            {duration} minute test
           </p>
 
           <button
@@ -1230,9 +2145,14 @@ function ResultScreen({
           <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">
             Test Completed
           </p>
-          <h2 className="mt-1 text-3xl font-bold">Stenography Analysis</h2>
+
+          <h2 className="mt-1 text-3xl font-bold">
+            Stenography Analysis
+          </h2>
+
           <p className="mt-1 text-sm text-slate-500">
-            Review your transcription and mistakes below.
+            Review your transcription
+            and mistakes below.
           </p>
         </div>
 
@@ -1252,7 +2172,8 @@ function ResultScreen({
           </div>
         ) : (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-            ✓ Test result saved to your account
+            ✓ Test result saved to
+            your account
           </div>
         )}
       </div>
@@ -1260,39 +2181,50 @@ function ResultScreen({
       <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-8">
         <StatBox
           title="Accuracy"
-          value={`${result.accuracy.toFixed(1)}%`}
+          value={`${result.accuracy.toFixed(
+            1
+          )}%`}
           className="border-emerald-200 bg-emerald-50 text-emerald-700"
         />
+
         <StatBox
           title="Error"
-          value={`${result.errorPercentage.toFixed(1)}%`}
+          value={`${result.errorPercentage.toFixed(
+            1
+          )}%`}
           className="border-red-200 bg-red-50 text-red-700"
         />
+
         <StatBox
           title="WPM"
           value={result.wpm.toString()}
           className="border-blue-200 bg-blue-50 text-blue-700"
         />
+
         <StatBox
           title="Full Mistakes"
           value={result.fullMistakes.toString()}
           className="border-red-200 bg-red-50 text-red-700"
         />
+
         <StatBox
           title="Half Mistakes"
           value={result.halfMistakes.toString()}
           className="border-yellow-200 bg-yellow-50 text-yellow-800"
         />
+
         <StatBox
           title="Total Mistakes"
           value={result.totalMistakes.toString()}
           className="border-purple-200 bg-purple-50 text-purple-700"
         />
+
         <StatBox
           title="Words Typed"
           value={result.typedWords.toString()}
           className="border-slate-200 bg-slate-50 text-slate-700"
         />
+
         <StatBox
           title="Master Words"
           value={result.masterWords.toString()}
@@ -1307,62 +2239,91 @@ function ResultScreen({
               <h3 className="text-xl font-bold text-blue-900">
                 Your Typed Passage
               </h3>
+
               <p className="mt-1 text-xs text-blue-700">
-                Correct word appears in brackets behind a wrong/spelling word.
+                Correct word appears in
+                brackets behind a
+                wrong/spelling word.
               </p>
             </div>
 
             <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-700">
-              {result.typedWords} words
+              {result.typedWords}{" "}
+              words
             </span>
           </div>
 
           <div className="p-6">
-            <HighlightedPassage highlights={result.highlights} />
+            <HighlightedPassage
+              highlights={
+                result.highlights
+              }
+            />
 
             {!typedPassage.trim() && (
-              <p className="text-slate-400">No transcription entered.</p>
+              <p className="text-slate-400">
+                No transcription entered.
+              </p>
             )}
           </div>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-xl font-bold">Mistake Breakdown</h3>
+          <h3 className="text-xl font-bold">
+            Mistake Breakdown
+          </h3>
 
           <div className="mt-5 space-y-3">
             <BreakdownRow
               label="Wrong Words"
-              value={result.wrongWords}
+              value={
+                result.wrongWords
+              }
               className="bg-red-50 text-red-700"
               dotClass="bg-red-500"
             />
+
             <BreakdownRow
               label="Missing Words"
-              value={result.missingWords}
+              value={
+                result.missingWords
+              }
               className="bg-yellow-50 text-yellow-800"
               dotClass="bg-yellow-400"
             />
+
             <BreakdownRow
               label="Extra Words"
-              value={result.extraWords}
+              value={
+                result.extraWords
+              }
               className="bg-orange-50 text-orange-700"
               dotClass="bg-orange-500"
             />
+
             <BreakdownRow
               label="Spelling"
-              value={result.spellingMistakes}
+              value={
+                result.spellingMistakes
+              }
               className="bg-purple-50 text-purple-700"
               dotClass="bg-purple-500"
             />
+
             <BreakdownRow
               label="Capitalization"
-              value={result.capitalizationMistakes}
+              value={
+                result.capitalizationMistakes
+              }
               className="bg-pink-50 text-pink-700"
               dotClass="bg-pink-500"
             />
+
             <BreakdownRow
               label="Punctuation"
-              value={result.punctuationMistakes}
+              value={
+                result.punctuationMistakes
+              }
               className="bg-blue-50 text-blue-700"
               dotClass="bg-blue-500"
             />
@@ -1370,30 +2331,75 @@ function ResultScreen({
 
           <div className="my-5 border-t border-slate-200" />
 
-          <h4 className="font-bold">Additional Stats</h4>
+          <h4 className="font-bold">
+            Additional Stats
+          </h4>
 
           <div className="mt-4 space-y-4">
-            <InfoRow label="Time Taken" value={formatTime(result.timeTaken)} />
-            <InfoRow label="Typing Speed" value={`${result.wpm} WPM`} />
-            <InfoRow label="Accuracy" value={`${result.accuracy.toFixed(1)}%`} />
+            <InfoRow
+              label="Time Taken"
+              value={formatTime(
+                result.timeTaken
+              )}
+            />
+
+            <InfoRow
+              label="Typing Speed"
+              value={`${result.wpm} WPM`}
+            />
+
+            <InfoRow
+              label="Accuracy"
+              value={`${result.accuracy.toFixed(
+                1
+              )}%`}
+            />
+
             <InfoRow
               label="Error Percentage"
-              value={`${result.errorPercentage.toFixed(1)}%`}
+              value={`${result.errorPercentage.toFixed(
+                1
+              )}%`}
             />
           </div>
         </div>
       </div>
 
       <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h4 className="mb-4 font-bold">Highlight Legend</h4>
+        <h4 className="mb-4 font-bold">
+          Highlight Legend
+        </h4>
 
         <div className="flex flex-wrap gap-x-6 gap-y-3">
-          <LegendItem color="bg-red-300" label="Wrong Word" />
-          <LegendItem color="bg-yellow-300" label="Missing Word" />
-          <LegendItem color="bg-orange-300" label="Extra Word" />
-          <LegendItem color="bg-purple-300" label="Spelling" />
-          <LegendItem color="bg-pink-300" label="Capitalization" />
-          <LegendItem color="bg-blue-300" label="Punctuation" />
+          <LegendItem
+            color="bg-red-300"
+            label="Wrong Word"
+          />
+
+          <LegendItem
+            color="bg-yellow-300"
+            label="Missing Word"
+          />
+
+          <LegendItem
+            color="bg-orange-300"
+            label="Extra Word"
+          />
+
+          <LegendItem
+            color="bg-purple-300"
+            label="Spelling"
+          />
+
+          <LegendItem
+            color="bg-pink-300"
+            label="Capitalization"
+          />
+
+          <LegendItem
+            color="bg-blue-300"
+            label="Punctuation"
+          />
         </div>
       </div>
 
@@ -1402,13 +2408,16 @@ function ResultScreen({
           <h3 className="text-xl font-bold text-emerald-900">
             Master / Actual Passage
           </h3>
+
           <p className="mt-1 text-xs text-emerald-700">
-            Original passage used for comparison
+            Original passage used for
+            comparison
           </p>
         </div>
 
         <div className="whitespace-pre-wrap p-6 text-base leading-8 text-slate-800">
-          {masterPassage || "No master passage."}
+          {masterPassage ||
+            "No master passage."}
         </div>
       </div>
     </section>
@@ -1422,34 +2431,47 @@ function HighlightedPassage({
 }) {
   return (
     <div className="whitespace-pre-wrap text-base leading-10 text-slate-900">
-      {highlights.map((item, index) => {
-        if (item.type === "correct") {
+      {highlights.map(
+        (item, index) => {
+          if (
+            item.type ===
+            "correct"
+          ) {
+            return (
+              <span key={index}>
+                {item.word}{" "}
+              </span>
+            );
+          }
+
+          const style =
+            getHighlightStyle(
+              item.type
+            );
+
           return (
-            <span key={index}>
-              {item.word}{" "}
+            <span
+              key={index}
+              className={`mx-[2px] inline rounded px-1.5 py-0.5 font-medium ${style}`}
+              title={
+                item.correctWord
+                  ? `Correct word: ${item.correctWord}`
+                  : getMistakeLabel(
+                      item.type
+                    )
+              }
+            >
+              {item.word}
+
+              {item.correctWord &&
+              item.type !==
+                "missing"
+                ? ` (${item.correctWord})`
+                : ""}{" "}
             </span>
           );
         }
-
-        const style = getHighlightStyle(item.type);
-
-        return (
-          <span
-            key={index}
-            className={`mx-[2px] inline rounded px-1.5 py-0.5 font-medium ${style}`}
-            title={
-              item.correctWord
-                ? `Correct word: ${item.correctWord}`
-                : getMistakeLabel(item.type)
-            }
-          >
-            {item.word}
-            {item.correctWord && item.type !== "missing"
-              ? ` (${item.correctWord})`
-              : ""}{" "}
-          </span>
-        );
-      })}
+      )}
     </div>
   );
 }
@@ -1473,19 +2495,33 @@ function RuleBox({
 }) {
   const styles = {
     red: "border-red-200 bg-red-50",
-    yellow: "border-yellow-200 bg-yellow-50",
-    orange: "border-orange-200 bg-orange-50",
-    purple: "border-purple-200 bg-purple-50",
-    pink: "border-pink-200 bg-pink-50",
-    blue: "border-blue-200 bg-blue-50",
-    slate: "border-slate-200 bg-slate-50",
-    green: "border-emerald-200 bg-emerald-50",
+    yellow:
+      "border-yellow-200 bg-yellow-50",
+    orange:
+      "border-orange-200 bg-orange-50",
+    purple:
+      "border-purple-200 bg-purple-50",
+    pink:
+      "border-pink-200 bg-pink-50",
+    blue:
+      "border-blue-200 bg-blue-50",
+    slate:
+      "border-slate-200 bg-slate-50",
+    green:
+      "border-emerald-200 bg-emerald-50",
   };
 
   return (
-    <div className={`rounded-xl border p-4 ${styles[color]}`}>
-      <p className="font-semibold">{title}</p>
-      <p className="mt-1 text-sm text-slate-600">{text}</p>
+    <div
+      className={`rounded-xl border p-4 ${styles[color]}`}
+    >
+      <p className="font-semibold">
+        {title}
+      </p>
+
+      <p className="mt-1 text-sm text-slate-600">
+        {text}
+      </p>
     </div>
   );
 }
@@ -1500,9 +2536,16 @@ function StatBox({
   className: string;
 }) {
   return (
-    <div className={`rounded-xl border p-4 ${className}`}>
-      <p className="text-xs font-semibold opacity-80">{title}</p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
+    <div
+      className={`rounded-xl border p-4 ${className}`}
+    >
+      <p className="text-xs font-semibold opacity-80">
+        {title}
+      </p>
+
+      <p className="mt-1 text-2xl font-bold">
+        {value}
+      </p>
     </div>
   );
 }
@@ -1523,19 +2566,38 @@ function BreakdownRow({
       className={`flex items-center justify-between rounded-xl px-4 py-3 ${className}`}
     >
       <div className="flex items-center gap-3">
-        <span className={`h-3 w-3 rounded-full ${dotClass}`} />
-        <span className="text-sm font-medium">{label}</span>
+        <span
+          className={`h-3 w-3 rounded-full ${dotClass}`}
+        />
+
+        <span className="text-sm font-medium">
+          {label}
+        </span>
       </div>
-      <span className="font-bold">{value}</span>
+
+      <span className="font-bold">
+        {value}
+      </span>
     </div>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   return (
     <div className="flex items-center justify-between border-b border-slate-100 pb-3 last:border-0">
-      <span className="text-sm text-slate-500">{label}</span>
-      <span className="font-bold text-slate-800">{value}</span>
+      <span className="text-sm text-slate-500">
+        {label}
+      </span>
+
+      <span className="font-bold text-slate-800">
+        {value}
+      </span>
     </div>
   );
 }
@@ -1549,7 +2611,10 @@ function LegendItem({
 }) {
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className={`h-4 w-4 rounded ${color}`} />
+      <span
+        className={`h-4 w-4 rounded ${color}`}
+      />
+
       <span>{label}</span>
     </div>
   );
@@ -1570,11 +2635,19 @@ function StepHeader({
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-bold text-white">
           {step}
         </span>
-        <p className="text-sm font-semibold text-blue-600">STEP {step}</p>
+
+        <p className="text-sm font-semibold text-blue-600">
+          STEP {step}
+        </p>
       </div>
 
-      <h2 className="mt-4 text-3xl font-bold">{title}</h2>
-      <p className="mt-2 max-w-2xl text-slate-500">{description}</p>
+      <h2 className="mt-4 text-3xl font-bold">
+        {title}
+      </h2>
+
+      <p className="mt-2 max-w-2xl text-slate-500">
+        {description}
+      </p>
     </div>
   );
 }
