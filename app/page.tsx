@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -11,7 +12,7 @@ import {
   browserLocalPersistence,
 } from "firebase/auth";
 
-import { auth } from "../lib/firebase";
+import { auth, authPersistenceReady } from "../lib/firebase";
 
 type OtpMode = "register" | "forgot-password";
 
@@ -33,12 +34,43 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   // Keep user logged in until manual logout
-  useEffect(() => {
-    setPersistence(auth, browserLocalPersistence).catch((err) => {
-      console.error("Persistence error:", err);
-    });
-  }, []);
+ useEffect(() => {
+  let unsubscribe: (() => void) | undefined;
 
+  authPersistenceReady
+    .then(() => {
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          window.location.replace("/main-dashboard");
+        }
+      });
+    })
+    .catch((err) => {
+      console.error("Auth initialization error:", err);
+    });
+
+  return () => {
+    unsubscribe?.();
+  };
+}, []);useEffect(() => {
+  let unsubscribe: (() => void) | undefined;
+
+  authPersistenceReady
+    .then(() => {
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          window.location.replace("/main-dashboard");
+        }
+      });
+    })
+    .catch((err) => {
+      console.error("Auth initialization error:", err);
+    });
+
+  return () => {
+    unsubscribe?.();
+  };
+}, []);
   async function sendOtp(type: OtpMode) {
     setError("");
     setMessage("");
@@ -256,7 +288,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      await setPersistence(auth, browserLocalPersistence);
+     await authPersistenceReady;
 
       const result = await signInWithEmailAndPassword(
         auth,
@@ -264,7 +296,7 @@ export default function Home() {
         password
       );
 
-      window.location.href = "/main-dashboard";
+      window.location.replace("/main-dashboard");
     } catch (err: any) {
       console.error("EMAIL LOGIN ERROR:", err);
 
@@ -300,7 +332,7 @@ export default function Home() {
 
       await signInWithPopup(auth, provider);
 
-      window.location.href = "/main-dashboard";
+      window.location.replace("/main-dashboard");
     } catch (err: any) {
       console.error("GOOGLE LOGIN ERROR:", err);
 
