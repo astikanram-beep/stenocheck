@@ -114,7 +114,7 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error("RESEND ERROR:", error);
-
+console.error("RESEND ERROR DETAILS:", JSON.stringify(error, null, 2));
       return NextResponse.json(
         { error: "Unable to send OTP email." },
         { status: 500 }

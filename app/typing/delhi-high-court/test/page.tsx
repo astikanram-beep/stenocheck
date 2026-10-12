@@ -7,6 +7,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type KeyboardEvent,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,6 +19,16 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
+
+type PerformancePoint = {
+  minute: number;
+  speed: number;
+  wordsTyped: number;
+};
+
+function countWords(value: string) {
+  return value.trim() ? value.trim().split(/\s+/).length : 0;
+}
 
 function DelhiHighCourtTypingTestContent() {
   const router = useRouter();
@@ -39,12 +51,22 @@ function DelhiHighCourtTypingTestContent() {
   const [timeLeft, setTimeLeft] = useState(600);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
 
+  const [backspaceCount, setBackspaceCount] = useState(0);
+  const [performanceHistory, setPerformanceHistory] = useState<
+    PerformancePoint[]
+  >([]);
+
   const [passage, setPassage] = useState("");
   const [loadingPassage, setLoadingPassage] = useState(true);
   const [passageError, setPassageError] = useState("");
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const submittedRef = useRef(false);
+  const startTimeRef = useRef<number | null>(null);
+  const lastRecordedMinuteRef = useRef(0);
+  const latestTextRef = useRef("");
+  const backspaceCountRef = useRef(0);
+  const performanceHistoryRef = useRef<PerformancePoint[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +135,7 @@ function DelhiHighCourtTypingTestContent() {
   );
 
   const totalWords = useMemo(
-    () => (passage.trim() ? passage.trim().split(/\s+/).length : 0),
+    () => countWords(passage),
     [passage]
   );
 
@@ -142,9 +164,17 @@ function DelhiHighCourtTypingTestContent() {
       );
     }
 
+    latestTextRef.current = "";
+    backspaceCountRef.current = 0;
+    performanceHistoryRef.current = [];
+    lastRecordedMinuteRef.current = 0;
+    startTimeRef.current = Date.now();
+
     setText("");
     setTimeLeft(600);
     setCurrentWordIndex(0);
+    setBackspaceCount(0);
+    setPerformanceHistory([]);
     setSubmitted(false);
     submittedRef.current = false;
     setStarted(true);
@@ -154,12 +184,33 @@ function DelhiHighCourtTypingTestContent() {
     }, 200);
   }
 
-  function handleTyping(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setText(e.target.value);
+  function handleTyping(e: ChangeEvent<HTMLTextAreaElement>) {
+    const newText = e.target.value;
+
+    latestTextRef.current = newText;
+    setText(newText);
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     const textarea = e.currentTarget;
+
+    if (e.key === "Backspace") {
+      backspaceCountRef.current += 1;
+      setBackspaceCount(backspaceCountRef.current);
+
+      if (
+        textarea.selectionStart === textarea.selectionEnd
+      ) {
+        const cursorPosition = textarea.selectionStart;
+        const beforeCursor = textarea.value.slice(0, cursorPosition);
+
+        if (cursorPosition > 0 && /\s$/.test(beforeCursor)) {
+          setCurrentWordIndex((previous) =>
+            Math.max(0, previous - 1)
+          );
+        }
+      }
+    }
 
     if (e.key === " " && currentWordIndex < totalWords - 1) {
       setCurrentWordIndex((previous) =>
@@ -167,48 +218,114 @@ function DelhiHighCourtTypingTestContent() {
       );
     }
 
-    if (
-      e.key === "Backspace" &&
-      textarea.selectionStart === textarea.selectionEnd
-    ) {
-      const cursorPosition = textarea.selectionStart;
-      const beforeCursor = textarea.value.slice(0, cursorPosition);
-
-      if (cursorPosition > 0 && /\s$/.test(beforeCursor)) {
-        setCurrentWordIndex((previous) => Math.max(0, previous - 1));
-      }
-    }
-
     if (e.key === "PageUp" || e.key === "PageDown") {
       e.preventDefault();
     }
+  }
+
+  function recordPerformance(elapsedSeconds: number) {
+    const minute = Math.min(
+      10,
+      Math.floor(elapsedSeconds / 60)
+    );
+
+    if (
+      minute < 1 ||
+      minute > 10 ||
+      minute <= lastRecordedMinuteRef.current
+    ) {
+      return;
+    }
+
+    const wordsTyped = countWords(latestTextRef.current);
+    const elapsedMinutes = elapsedSeconds / 60;
+    const speed =
+      elapsedMinutes > 0
+        ? Math.round(wordsTyped / elapsedMinutes)
+        : 0;
+
+    const point: PerformancePoint = {
+      minute,
+      speed,
+      wordsTyped,
+    };
+
+    const updatedHistory = [
+      ...performanceHistoryRef.current,
+      point,
+    ];
+
+    performanceHistoryRef.current = updatedHistory;
+    lastRecordedMinuteRef.current = minute;
+    setPerformanceHistory(updatedHistory);
   }
 
   function submitTest() {
     if (submittedRef.current) return;
 
     submittedRef.current = true;
+
+    const startedAt = startTimeRef.current;
+    const elapsedSeconds = startedAt
+      ? Math.min(
+          600,
+          Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+        )
+      : 0;
+
+    // Record the final partial minute/test snapshot as well.
+    const finalMinute = Math.min(
+      10,
+      Math.floor(elapsedSeconds / 60)
+    );
+
+    if (
+      finalMinute > 0 &&
+      finalMinute > lastRecordedMinuteRef.current
+    ) {
+      recordPerformance(elapsedSeconds);
+    }
+
     setSubmitted(true);
     exitFullscreen();
+
+    const finalText = latestTextRef.current;
+    const finalWordCount = countWords(finalText);
 
     const testData = {
       name: name.trim(),
       masterPassage: passage,
-      typedText: text,
+      typedText: finalText,
       allottedMinutes: 10,
       requiredWpm: 40,
       totalMasterWords: totalWords,
       difficulty: difficultyTitle,
       passageNumber,
       exam: "DHC",
+
+      // Newly recorded test information
+      backspaceCount: backspaceCountRef.current,
+      backspaceUsed: backspaceCountRef.current,
+      performanceHistory: performanceHistoryRef.current,
+      elapsedSeconds,
+      wordsTyped: finalWordCount,
     };
 
-    sessionStorage.setItem(
-      "dhcTypingTestData",
-      JSON.stringify(testData)
-    );
+    try {
+      sessionStorage.setItem(
+        "dhcTypingTestData",
+        JSON.stringify(testData)
+      );
 
-    router.push("/typing/delhi-high-court/result");
+      router.push("/typing/delhi-high-court/result");
+    } catch (error) {
+      console.error("Unable to save typing test result:", error);
+      alert(
+        "Test result could not be saved. Please check your browser settings and try again."
+      );
+      submittedRef.current = false;
+      setSubmitted(false);
+    }
   }
 
   useEffect(() => {
@@ -220,7 +337,26 @@ function DelhiHighCourtTypingTestContent() {
     }
 
     const timer = window.setTimeout(() => {
-      setTimeLeft((previous) => Math.max(0, previous - 1));
+      const elapsedSeconds = Math.min(
+        600,
+        Math.max(
+          0,
+          Math.floor(
+            (Date.now() - (startTimeRef.current ?? Date.now())) /
+              1000
+          )
+        )
+      );
+
+      // Record one snapshot after each completed minute.
+      if (
+        elapsedSeconds > 0 &&
+        elapsedSeconds % 60 === 0
+      ) {
+        recordPerformance(elapsedSeconds);
+      }
+
+      setTimeLeft(Math.max(0, 600 - elapsedSeconds));
     }, 1000);
 
     return () => window.clearTimeout(timer);
@@ -243,7 +379,8 @@ function DelhiHighCourtTypingTestContent() {
             Loading Passage...
           </h1>
           <p className="mt-2 text-slate-500">
-            {difficultyTitle} • Passage {String(passageNumber).padStart(2, "0")}
+            {difficultyTitle} • Passage{" "}
+            {String(passageNumber).padStart(2, "0")}
           </p>
         </div>
       </main>
@@ -296,7 +433,8 @@ function DelhiHighCourtTypingTestContent() {
               </h1>
 
               <p className="mt-2 text-slate-500">
-                {difficultyTitle} • Passage {String(passageNumber).padStart(2, "0")}
+                {difficultyTitle} • Passage{" "}
+                {String(passageNumber).padStart(2, "0")}
               </p>
               <p className="mt-1 text-slate-500">
                 10 Minutes • {totalWords} Words
@@ -326,7 +464,9 @@ function DelhiHighCourtTypingTestContent() {
                   At a word boundary, pressing <strong>Backspace</strong>{" "}
                   moves the highlight back.
                 </p>
-                <p><strong>Default Highlight: OFF</strong></p>
+                <p>
+                  <strong>Default Highlight: OFF</strong>
+                </p>
               </div>
             </div>
 
@@ -449,7 +589,9 @@ function DelhiHighCourtTypingTestContent() {
           <h1 className="mt-4 text-3xl font-extrabold text-slate-900">
             Test Submitted
           </h1>
-          <p className="mt-3 text-slate-600">Thank you, {name}.</p>
+          <p className="mt-3 text-slate-600">
+            Thank you, {name}.
+          </p>
         </div>
       </main>
     );
@@ -492,7 +634,8 @@ function DelhiHighCourtTypingTestContent() {
                 .filter((item) => !/^\s+$/.test(item)).length;
 
               const isCurrentWord =
-                highlightCurrentWord && wordIndex === currentWordIndex;
+                highlightCurrentWord &&
+                wordIndex === currentWordIndex;
 
               return (
                 <span
@@ -511,13 +654,16 @@ function DelhiHighCourtTypingTestContent() {
         </section>
 
         <section className="flex min-h-0 flex-col rounded-2xl border bg-white p-3 shadow-sm sm:p-4">
-          <div className="mb-2 flex shrink-0 items-center justify-between">
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
             <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
               Typing Passage
             </h2>
-            <span className="text-xs text-slate-500 sm:text-sm">
-              {text.trim() ? text.trim().split(/\s+/).length : 0} words typed
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500 sm:text-sm">
+              <span>{countWords(text)} words typed</span>
+              <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800">
+                Backspace: {backspaceCount}
+              </span>
+            </div>
           </div>
 
           <textarea
