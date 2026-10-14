@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-   onAuthStateChanged,
+  onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -19,58 +19,43 @@ type OtpMode = "register" | "forgot-password";
 export default function Home() {
   const [isRegister, setIsRegister] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
-
   const [otpStep, setOtpStep] = useState(false);
   const [otpMode, setOtpMode] = useState<OtpMode>("register");
+
+  const [passwordResetStep, setPasswordResetStep] = useState(false);
+  const [resetToken, setResetToken] = useState("");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Keep user logged in until manual logout
- useEffect(() => {
-  let unsubscribe: (() => void) | undefined;
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
 
-  authPersistenceReady
-    .then(() => {
-      unsubscribe = onAuthStateChanged(auth, (user) => {
-        if (user) {
-          window.location.replace("/main-dashboard");
-        }
+    authPersistenceReady
+      .then(() => {
+        unsubscribe = onAuthStateChanged(auth, (user) => {
+          if (user) {
+            window.location.replace("/main-dashboard");
+          }
+        });
+      })
+      .catch((err) => {
+        console.error("Auth initialization error:", err);
       });
-    })
-    .catch((err) => {
-      console.error("Auth initialization error:", err);
-    });
 
-  return () => {
-    unsubscribe?.();
-  };
-}, []);useEffect(() => {
-  let unsubscribe: (() => void) | undefined;
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
-  authPersistenceReady
-    .then(() => {
-      unsubscribe = onAuthStateChanged(auth, (user) => {
-        if (user) {
-          window.location.replace("/main-dashboard");
-        }
-      });
-    })
-    .catch((err) => {
-      console.error("Auth initialization error:", err);
-    });
-
-  return () => {
-    unsubscribe?.();
-  };
-}, []);
   async function sendOtp(type: OtpMode) {
     setError("");
     setMessage("");
@@ -127,14 +112,23 @@ export default function Home() {
       setEmail(cleanEmail);
       setOtp("");
       setOtpMode(type);
+
+      setPasswordResetStep(false);
+      setResetToken("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+
       setOtpStep(true);
 
       setMessage(
         "OTP sent successfully. Please check your email inbox and spam folder."
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("SEND OTP ERROR:", err);
-      setError(err?.message || "Unable to send OTP.");
+
+      setError(
+        err instanceof Error ? err.message : "Unable to send OTP."
+      );
     } finally {
       setLoading(false);
     }
@@ -178,18 +172,35 @@ export default function Home() {
       if (otpMode === "register") {
         await createAccountAfterVerification();
       } else {
+        if (
+          typeof data?.resetToken !== "string" ||
+          !data.resetToken
+        ) {
+          throw new Error(
+            "Verification token was not returned. Please request a new OTP."
+          );
+        }
+
+        setResetToken(data.resetToken);
+        setPasswordResetStep(true);
         setOtpStep(false);
+
         setNewPassword("");
+        setConfirmNewPassword("");
         setOtp("");
 
         setMessage(
           "Email verified successfully. Please enter your new password."
         );
+
         setOtpMode("forgot-password");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("VERIFY OTP ERROR:", err);
-      setError(err?.message || "Unable to verify OTP.");
+
+      setError(
+        err instanceof Error ? err.message : "Unable to verify OTP."
+      );
     } finally {
       setLoading(false);
     }
@@ -212,22 +223,31 @@ export default function Home() {
       setMessage("Account created successfully. Redirecting...");
 
       window.location.href = "/main-dashboard";
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("CREATE ACCOUNT ERROR:", err);
 
-      if (err?.code === "auth/email-already-in-use") {
+      const code =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code?: unknown }).code)
+          : "";
+
+      if (code === "auth/email-already-in-use") {
         throw new Error("This email is already registered.");
       }
 
-      if (err?.code === "auth/weak-password") {
+      if (code === "auth/weak-password") {
         throw new Error("Password should be at least 6 characters.");
       }
 
-      if (err?.code === "auth/invalid-email") {
+      if (code === "auth/invalid-email") {
         throw new Error("Please enter a valid email address.");
       }
 
-      throw new Error(err?.message || "Unable to create account.");
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Unable to create account."
+      );
     }
   }
 
@@ -241,7 +261,19 @@ export default function Home() {
     }
 
     if (newPassword.length < 6) {
-      setError("Password should be at least 6 characters.");
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setError("New password and confirm password do not match.");
+      return;
+    }
+
+    if (!resetToken) {
+      setError(
+        "Verification is missing. Please request and verify a new OTP."
+      );
       return;
     }
 
@@ -256,6 +288,7 @@ export default function Home() {
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           password: newPassword,
+          resetToken,
         }),
       });
 
@@ -265,18 +298,25 @@ export default function Home() {
         throw new Error(data?.error || "Unable to reset password.");
       }
 
-      setMessage(
-        "Password changed successfully. You can now login with your new password."
-      );
-
       setShowForgot(false);
       setOtpStep(false);
+      setPasswordResetStep(false);
+      setResetToken("");
+
       setNewPassword("");
+      setConfirmNewPassword("");
       setOtp("");
       setPassword("");
-    } catch (err: any) {
+
+      setMessage(
+        "Password changed successfully. You can now log in with your new password."
+      );
+    } catch (err: unknown) {
       console.error("RESET PASSWORD ERROR:", err);
-      setError(err?.message || "Unable to reset password.");
+
+      setError(
+        err instanceof Error ? err.message : "Unable to reset password."
+      );
     } finally {
       setLoading(false);
     }
@@ -288,25 +328,31 @@ export default function Home() {
     setLoading(true);
 
     try {
-     await authPersistenceReady;
+      await authPersistenceReady;
 
-      const result = await signInWithEmailAndPassword(
+      await signInWithEmailAndPassword(
         auth,
         email.trim().toLowerCase(),
         password
       );
 
       window.location.replace("/main-dashboard");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("EMAIL LOGIN ERROR:", err);
 
-      let errorMessage = err?.message || "Something went wrong.";
+      const code =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code?: unknown }).code)
+          : "";
 
-      if (err?.code === "auth/invalid-credential") {
+      let errorMessage =
+        err instanceof Error ? err.message : "Something went wrong.";
+
+      if (code === "auth/invalid-credential") {
         errorMessage = "Invalid email or password.";
-      } else if (err?.code === "auth/invalid-email") {
+      } else if (code === "auth/invalid-email") {
         errorMessage = "Please enter a valid email address.";
-      } else if (err?.code === "auth/user-disabled") {
+      } else if (code === "auth/user-disabled") {
         errorMessage = "This account has been disabled.";
       }
 
@@ -333,11 +379,13 @@ export default function Home() {
       await signInWithPopup(auth, provider);
 
       window.location.replace("/main-dashboard");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("GOOGLE LOGIN ERROR:", err);
 
       setError(
-        err?.message || "Unable to login with Google. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Unable to login with Google. Please try again."
       );
     } finally {
       setLoading(false);
@@ -348,6 +396,8 @@ export default function Home() {
     setIsRegister(!isRegister);
     setShowForgot(false);
     setOtpStep(false);
+    setPasswordResetStep(false);
+    setResetToken("");
 
     setError("");
     setMessage("");
@@ -357,12 +407,15 @@ export default function Home() {
     setPassword("");
     setOtp("");
     setNewPassword("");
+    setConfirmNewPassword("");
   }
 
   function openForgotPassword() {
     setShowForgot(true);
     setIsRegister(false);
     setOtpStep(false);
+    setPasswordResetStep(false);
+    setResetToken("");
 
     setError("");
     setMessage("");
@@ -370,26 +423,28 @@ export default function Home() {
     setPassword("");
     setOtp("");
     setNewPassword("");
+    setConfirmNewPassword("");
   }
 
   function backToLogin() {
     setShowForgot(false);
     setIsRegister(false);
     setOtpStep(false);
+    setPasswordResetStep(false);
+    setResetToken("");
 
     setError("");
     setMessage("");
 
     setOtp("");
     setNewPassword("");
+    setConfirmNewPassword("");
     setPassword("");
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 px-5 py-10">
       <div className="w-full max-w-md">
-
-        {/* Logo */}
         <div className="mb-8 text-center">
           <img
             src="/logo.png"
@@ -402,34 +457,35 @@ export default function Home() {
           </h1>
 
           <p className="mt-2 text-slate-500">
-            Stenography Practice & Passage Checking
+            Stenography Practice &amp; Passage Checking
           </p>
         </div>
 
         <div className="rounded-2xl border bg-white p-8 shadow-xl">
-
-          {/* Heading */}
           <h2 className="text-2xl font-bold text-slate-900">
             {otpStep
               ? "Verify OTP"
               : showForgot
-              ? "Reset Password"
-              : isRegister
-              ? "Create Account"
-              : "Welcome Back 👋"}
+                ? passwordResetStep
+                  ? "Create New Password"
+                  : "Reset Password"
+                : isRegister
+                  ? "Create Account"
+                  : "Welcome Back 👋"}
           </h2>
 
           <p className="mt-2 text-sm text-slate-500">
             {otpStep
               ? `Enter the 6-digit OTP sent to ${email}`
               : showForgot
-              ? "Reset your password using email verification."
-              : isRegister
-              ? "Create your StenoCheck account."
-              : "Login to continue to your dashboard."}
+                ? passwordResetStep
+                  ? "Choose a new password for your account."
+                  : "Reset your password using email verification."
+                : isRegister
+                  ? "Create your StenoCheck account."
+                  : "Login to continue to your dashboard."}
           </p>
 
-          {/* Error */}
           {error && (
             <div className="mt-5 break-words rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <p className="font-semibold">Notice</p>
@@ -437,15 +493,13 @@ export default function Home() {
             </div>
           )}
 
-          {/* Success */}
           {message && (
             <div className="mt-5 break-words rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
-              <p className="font-semibold">Success</p>
+              <p className="font-semibold">Message</p>
               <p className="mt-1">{message}</p>
             </div>
           )}
 
-          {/* OTP SCREEN */}
           {otpStep ? (
             <>
               <div className="mt-6">
@@ -499,8 +553,7 @@ export default function Home() {
             </>
           ) : showForgot ? (
             <>
-              {/* Forgot Password */}
-              {!newPassword ? (
+              {!passwordResetStep ? (
                 <>
                   <div className="mt-6">
                     <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -534,9 +587,27 @@ export default function Home() {
 
                     <input
                       type="password"
+                      autoComplete="new-password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="Enter new password"
+                      className="w-full rounded-lg border px-4 py-3 outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                      Confirm New Password
+                    </label>
+
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmNewPassword}
+                      onChange={(e) =>
+                        setConfirmNewPassword(e.target.value)
+                      }
+                      placeholder="Re-enter new password"
                       className="w-full rounded-lg border px-4 py-3 outline-none focus:border-blue-500"
                     />
                   </div>
@@ -562,7 +633,6 @@ export default function Home() {
             </>
           ) : (
             <>
-              {/* Google Login */}
               {!isRegister && (
                 <>
                   <button
@@ -572,25 +642,17 @@ export default function Home() {
                     className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white py-3 font-semibold transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <span className="text-lg font-bold">G</span>
-
-                    {loading
-                      ? "Please wait..."
-                      : "Continue with Google"}
+                    {loading ? "Please wait..." : "Continue with Google"}
                   </button>
 
                   <div className="my-6 flex items-center gap-3">
                     <div className="h-px flex-1 bg-slate-200" />
-
-                    <span className="text-xs text-slate-400">
-                      OR
-                    </span>
-
+                    <span className="text-xs text-slate-400">OR</span>
                     <div className="h-px flex-1 bg-slate-200" />
                   </div>
                 </>
               )}
 
-              {/* Name */}
               {isRegister && (
                 <div className="mb-4">
                   <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -607,7 +669,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Email */}
               <div className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-slate-700">
                   Email
@@ -622,7 +683,6 @@ export default function Home() {
                 />
               </div>
 
-              {/* Password */}
               <div className="mb-2">
                 <label className="mb-2 block text-sm font-medium text-slate-700">
                   Password
@@ -630,6 +690,9 @@ export default function Home() {
 
                 <input
                   type="password"
+                  autoComplete={
+                    isRegister ? "new-password" : "current-password"
+                  }
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter password"
@@ -637,7 +700,6 @@ export default function Home() {
                 />
               </div>
 
-              {/* Forgot Password */}
               {!isRegister && (
                 <div className="mb-5 text-right">
                   <button
@@ -650,7 +712,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Login / Send OTP */}
               <button
                 type="button"
                 onClick={() =>
@@ -666,11 +727,10 @@ export default function Home() {
                     ? "Sending OTP..."
                     : "Please wait..."
                   : isRegister
-                  ? "Send OTP"
-                  : "Login"}
+                    ? "Send OTP"
+                    : "Login"}
               </button>
 
-              {/* Switch */}
               <p className="mt-6 text-center text-sm text-slate-500">
                 {isRegister
                   ? "Already have an account?"
