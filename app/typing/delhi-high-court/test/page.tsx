@@ -3,6 +3,7 @@
 
 import {
   Suspense,
+  memo,
   useEffect,
   useMemo,
   useRef,
@@ -26,9 +27,75 @@ type PerformancePoint = {
   wordsTyped: number;
 };
 
+type PassagePart = {
+  text: string;
+  wordIndex: number;
+  isWhitespace: boolean;
+};
+
 function countWords(value: string) {
   return value.trim() ? value.trim().split(/\s+/).length : 0;
 }
+
+// Master Passage is isolated from typing state updates.
+const MasterPassage = memo(function MasterPassage({
+  parts,
+  fontSize,
+  highlightCurrentWord,
+  currentWordIndex,
+}: {
+  parts: PassagePart[];
+  fontSize: number;
+  highlightCurrentWord: boolean;
+  currentWordIndex: number;
+}) {
+  return (
+    <div
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-800 sm:p-5"
+      style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
+    >
+      {parts.map((part, index) => {
+        const isCurrentWord =
+          !part.isWhitespace &&
+          highlightCurrentWord &&
+          part.wordIndex === currentWordIndex;
+
+        return (
+          <span
+            key={index}
+            className={
+              isCurrentWord
+                ? "rounded bg-yellow-200 px-1 font-semibold"
+                : ""
+            }
+          >
+            {part.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+});
+
+// Typing statistics update separately from the Master Passage.
+const TypingStats = memo(function TypingStats({
+  text,
+  backspaceCount,
+}: {
+  text: string;
+  backspaceCount: number;
+}) {
+  const wordsTyped = countWords(text);
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500 sm:text-sm">
+      <span>{wordsTyped} words typed</span>
+      <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800">
+        Backspace: {backspaceCount}
+      </span>
+    </div>
+  );
+});
 
 function DelhiHighCourtTypingTestContent() {
   const router = useRouter();
@@ -68,6 +135,7 @@ function DelhiHighCourtTypingTestContent() {
   const backspaceCountRef = useRef(0);
   const performanceHistoryRef = useRef<PerformancePoint[]>([]);
 
+  // Load passage from Firebase.
   useEffect(() => {
     let cancelled = false;
 
@@ -129,10 +197,26 @@ function DelhiHighCourtTypingTestContent() {
     };
   }, [difficulty, passageNumber, difficultyTitle]);
 
-  const passageWords = useMemo(
-    () => passage.split(/(\s+)/),
-    [passage]
-  );
+  // Precalculate each word index only when the passage changes.
+  const passageParts = useMemo(() => {
+    let wordIndex = 0;
+
+    return passage.split(/(\s+)/).map((part) => {
+      const isWhitespace = /^\s+$/.test(part);
+
+      const result: PassagePart = {
+        text: part,
+        wordIndex: isWhitespace ? -1 : wordIndex,
+        isWhitespace,
+      };
+
+      if (!isWhitespace) {
+        wordIndex += 1;
+      }
+
+      return result;
+    });
+  }, [passage]);
 
   const totalWords = useMemo(
     () => countWords(passage),
@@ -198,9 +282,7 @@ function DelhiHighCourtTypingTestContent() {
       backspaceCountRef.current += 1;
       setBackspaceCount(backspaceCountRef.current);
 
-      if (
-        textarea.selectionStart === textarea.selectionEnd
-      ) {
+      if (textarea.selectionStart === textarea.selectionEnd) {
         const cursorPosition = textarea.selectionStart;
         const beforeCursor = textarea.value.slice(0, cursorPosition);
 
@@ -273,7 +355,6 @@ function DelhiHighCourtTypingTestContent() {
         )
       : 0;
 
-    // Record the final partial minute/test snapshot as well.
     const finalMinute = Math.min(
       10,
       Math.floor(elapsedSeconds / 60)
@@ -302,8 +383,6 @@ function DelhiHighCourtTypingTestContent() {
       difficulty: difficultyTitle,
       passageNumber,
       exam: "DHC",
-
-      // Newly recorded test information
       backspaceCount: backspaceCountRef.current,
       backspaceUsed: backspaceCountRef.current,
       performanceHistory: performanceHistoryRef.current,
@@ -342,13 +421,11 @@ function DelhiHighCourtTypingTestContent() {
         Math.max(
           0,
           Math.floor(
-            (Date.now() - (startTimeRef.current ?? Date.now())) /
-              1000
+            (Date.now() - (startTimeRef.current ?? Date.now())) / 1000
           )
         )
       );
 
-      // Record one snapshot after each completed minute.
       if (
         elapsedSeconds > 0 &&
         elapsedSeconds % 60 === 0
@@ -620,37 +697,12 @@ function DelhiHighCourtTypingTestContent() {
             </span>
           </div>
 
-          <div
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-800 sm:p-5"
-            style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
-          >
-            {passageWords.map((part, index) => {
-              if (/^\s+$/.test(part)) {
-                return <span key={index}>{part}</span>;
-              }
-
-              const wordIndex = passageWords
-                .slice(0, index)
-                .filter((item) => !/^\s+$/.test(item)).length;
-
-              const isCurrentWord =
-                highlightCurrentWord &&
-                wordIndex === currentWordIndex;
-
-              return (
-                <span
-                  key={index}
-                  className={
-                    isCurrentWord
-                      ? "rounded bg-yellow-200 px-1 font-semibold"
-                      : ""
-                  }
-                >
-                  {part}
-                </span>
-              );
-            })}
-          </div>
+          <MasterPassage
+            parts={passageParts}
+            fontSize={fontSize}
+            highlightCurrentWord={highlightCurrentWord}
+            currentWordIndex={currentWordIndex}
+          />
         </section>
 
         <section className="flex min-h-0 flex-col rounded-2xl border bg-white p-3 shadow-sm sm:p-4">
@@ -658,12 +710,11 @@ function DelhiHighCourtTypingTestContent() {
             <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
               Typing Passage
             </h2>
-            <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500 sm:text-sm">
-              <span>{countWords(text)} words typed</span>
-              <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800">
-                Backspace: {backspaceCount}
-              </span>
-            </div>
+
+            <TypingStats
+              text={text}
+              backspaceCount={backspaceCount}
+            />
           </div>
 
           <textarea
